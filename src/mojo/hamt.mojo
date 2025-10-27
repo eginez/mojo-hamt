@@ -16,9 +16,65 @@ alias FILTER: UInt64 = 0x0FFFFFFFFFFFFFFF
 alias logger = Logger()
 
 
+struct NodeArena[
+    K: Movable & Copyable & Hashable & EqualityComparable & Stringable,
+    V: Movable & Copyable & Stringable,
+](Movable):
+    """Arena allocator for HAMT nodes to reduce malloc overhead.
+
+    Allocates nodes in blocks of BLOCK_SIZE, dramatically reducing
+    the number of malloc calls from O(N) to O(N/BLOCK_SIZE).
+    """
+
+    var blocks: List[UnsafePointer[HAMTNode[K, V]]]
+    var current_block: UnsafePointer[HAMTNode[K, V]]
+    var block_size: Int
+    var next_index: Int
+
+    fn __init__(out self, block_size: Int = 1024):
+        """Initialize arena with given block size (default 1024 nodes)."""
+        self.blocks = List[UnsafePointer[HAMTNode[K, V]]]()
+        self.block_size = block_size
+        self.next_index = block_size  # Force allocation of first block
+        self.current_block = UnsafePointer[HAMTNode[K, V]]()
+
+    fn __moveinit__(out self, deinit current: Self):
+        self.blocks = current.blocks^
+        self.current_block = current.current_block
+        self.block_size = current.block_size
+        self.next_index = current.next_index
+
+    fn allocate_node(mut self) -> UnsafePointer[HAMTNode[K, V]]:
+        """Allocate a single node from the arena.
+
+        If current block is full, allocates a new block of block_size nodes.
+        Returns pointer to uninitialized memory.
+        """
+        # Need new block?
+        if self.next_index >= self.block_size:
+            self.current_block = UnsafePointer[HAMTNode[K, V]].alloc(
+                self.block_size
+            )
+            self.blocks.append(self.current_block)
+            self.next_index = 0
+
+        # Get next slot and advance
+        var node_ptr = self.current_block.offset(self.next_index)
+        self.next_index += 1
+        return node_ptr
+
+    fn __del__(deinit self):
+        """Free all allocated blocks."""
+        for block in self.blocks:
+            if block:
+                # Note: We don't call destroy_pointee on individual nodes
+                # The HAMT's __del__ handles node cleanup via tree traversal
+                block.free()
+
+
 struct HAMTLeafNode[
     K: Movable & Copyable & Hashable & EqualityComparable & Stringable,
-    V: Movable & Copyable & Stringable
+    V: Movable & Copyable & Stringable,
 ](Copyable, Movable):
     var _items: List[Tuple[K, V]]
 
@@ -27,7 +83,8 @@ struct HAMTLeafNode[
         _ = self.add(key, value)
 
     fn add(mut self, key: K, value: V) -> Bool:
-        """Add or update a key-value pair. Returns True if a new key was added, False if updated."""
+        """Add or update a key-value pair. Returns True if a new key was added, False if updated.
+        """
         # TODO: fix all the copying going on here and
         # in set!!
         # look here: https://github.com/modular/modular/issues/4695
@@ -47,7 +104,7 @@ struct HAMTLeafNode[
 
 struct HAMTNode[
     K: Movable & Copyable & Hashable & EqualityComparable & Stringable,
-    V: Movable & Copyable & Stringable
+    V: Movable & Copyable & Stringable,
 ](Copyable, Movable):
     # This tells you what children are in this node
     # It represents a sparse array via an integer
@@ -64,7 +121,8 @@ struct HAMTNode[
         self.leaf_node = Optional[HAMTLeafNode[K, V]]()
 
     fn add_value(mut self, key: K, value: V) -> Bool:
-        """Add or update a key-value pair. Returns True if a new key was added, False if updated."""
+        """Add or update a key-value pair. Returns True if a new key was added, False if updated.
+        """
         if self.leaf_node:
             return self.leaf_node.value().add(key, value)
         else:
@@ -77,7 +135,8 @@ struct HAMTNode[
         return Optional[V]()
 
     fn collect_items(self, mut items: List[Tuple[K, V]]):
-        """Recursively collect all key-value pairs from this node and its children."""
+        """Recursively collect all key-value pairs from this node and its children.
+        """
         # Add items from leaf node if present
         if self.leaf_node:
             for item in self.leaf_node.value()._items:
@@ -88,13 +147,16 @@ struct HAMTNode[
             if child:
                 child[].collect_items(items)
 
-    fn add_child(mut self, chunk_index: UInt8) -> UnsafePointer[HAMTNode[K, V]]:
+    fn add_child(
+        mut self, chunk_index: UInt8, mut arena: NodeArena[K, V]
+    ) -> UnsafePointer[HAMTNode[K, V]]:
         masked_chunked = UInt64(1) << UInt64(chunk_index)
         masked_bitmap = UInt64(masked_chunked - 1) & self.children_bitmap
         child_index = pop_count(masked_bitmap)
         self.children_bitmap |= UInt64(masked_chunked)
 
-        var new_node_pointer = UnsafePointer[HAMTNode[K, V]].alloc(1)
+        # Allocate from arena instead of individual malloc
+        var new_node_pointer = arena.allocate_node()
         new_node_pointer.init_pointee_move(HAMTNode[K, V]())
         self.children.insert(Int(child_index), new_node_pointer)
         return new_node_pointer
@@ -121,25 +183,25 @@ struct HAMTNode[
         assert_true(child_index < len(self.children), "bad child index")
         return self.children[child_index]
 
-    fn __del__(deinit self):
-        for child in self.children:
-            if child:
-                child.destroy_pointee()
-                child.free()
+    # NOTE: No __del__ needed - HAMT handles cleanup via _cleanup_node
+    # which properly manages arena-allocated nodes
 
 
 struct HAMT[
     K: Movable & Copyable & Hashable & EqualityComparable & Stringable,
-    V: Movable & Copyable & Stringable
-](Sized, Stringable, Representable, Defaultable, Movable):
-
+    V: Movable & Copyable & Stringable,
+](Defaultable, Movable, Representable, Sized, Stringable):
     var root: UnsafePointer[HAMTNode[K, V]]
     var _size: Int
     var _max_level: UInt16
     var _custom_hash_fn: Optional[fn (K) -> UInt64]
+    var arena: NodeArena[K, V]
 
     fn __init__(out self):
-        self.root = UnsafePointer[HAMTNode[K, V]].alloc(1)
+        # Initialize arena first
+        self.arena = NodeArena[K, V](block_size=1024)
+        # Allocate root from arena
+        self.root = self.arena.allocate_node()
         self.root.init_pointee_move(HAMTNode[K, V]())
         self._custom_hash_fn = Optional[fn (K) -> UInt64]()
         # TODO make this a comptime var
@@ -147,7 +209,10 @@ struct HAMT[
         self._size = 0
 
     fn __init__(out self, hash_fn: fn (K) -> UInt64):
-        self.root = UnsafePointer[HAMTNode[K, V]].alloc(1)
+        # Initialize arena first
+        self.arena = NodeArena[K, V](block_size=1024)
+        # Allocate root from arena
+        self.root = self.arena.allocate_node()
         self.root.init_pointee_move(HAMTNode[K, V]())
         self._custom_hash_fn = Optional(hash_fn)
         self._max_level = 10
@@ -158,6 +223,7 @@ struct HAMT[
         self._custom_hash_fn = current._custom_hash_fn^
         self._max_level = current._max_level
         self._size = current._size
+        self.arena = current.arena^
 
     @always_inline
     fn _get_next_chunk(self, hashed_key: UInt64, level: UInt16) -> UInt8:
@@ -178,7 +244,6 @@ struct HAMT[
         # logger.debug("Filtered " + bin(filtered_key)[2:].rjust(64, "0"))
 
         return filtered_key
-
 
     fn get(self, key: K) raises -> Optional[V]:
         var curr_level: UInt16 = 0
@@ -207,7 +272,7 @@ struct HAMT[
             var next_node = curr_node[].get_child(chunk_index)
             if not next_node:
                 # insert node in the parent at index chunk_index
-                next_node = curr_node[].add_child(chunk_index)
+                next_node = curr_node[].add_child(chunk_index, self.arena)
             curr_node = next_node
             curr_level += 1
 
@@ -216,9 +281,25 @@ struct HAMT[
             self._size += 1
 
     fn __del__(deinit self):
+        # Clean up node contents (Lists, etc.) but don't free individual nodes
+        # The arena will free all blocks when it's destroyed
         if self.root:
-            self.root.destroy_pointee()
-            self.root.free()
+            self._cleanup_node(self.root)
+        # Arena's __del__ will free all blocks
+
+    fn _cleanup_node(self, node: UnsafePointer[HAMTNode[K, V]]):
+        """Recursively cleanup node contents without freeing the node itself."""
+        if not node:
+            return
+
+        # Recursively cleanup children first
+        for child in node[].children:
+            if child:
+                self._cleanup_node(child)
+
+        # Destroy this node's contents (frees internal Lists)
+        # but DON'T call node.free() - arena owns the memory
+        node.destroy_pointee()
 
     ### dict implementations
 
@@ -231,7 +312,7 @@ struct HAMT[
             return True
         return False
 
-    fn __getitem__(self, key: K) raises ->  V:
+    fn __getitem__(self, key: K) raises -> V:
         var result = self.get(key)
         if not result:
             raise Error("KeyError: key not found in HAMT")
@@ -263,8 +344,7 @@ struct HAMT[
         return "HAMT(" + self.__str__() + ")"
 
 
-
-#fn main() raises:
+# fn main() raises:
 #    var node = HAMT[Int, Int]()
 #    node.set(1, 1)
 #    node.set(2, 200)
