@@ -2,7 +2,7 @@
 
 A high-performance Hash Array Mapped Trie (HAMT) implementation in Mojo, providing an efficient persistent data structure for key-value storage.
 
-📊 **[View Live Benchmarks](https://eginez.github.io/mojo-learning/)**
+📊 **[View Live Benchmarks](https://eginez.github.io/mojo-hamt/)**
 
 ## Overview
 
