@@ -31,9 +31,11 @@ mojo-learning/
 │   ├── mojo/
 │   │   └── bench_numbers.mojo    # hamt-bench compatible benchmarks
 │   ├── python/                   # Python benchmarks (future)
+│   ├── hamt-bench/               # Git submodule: libhamt benchmark suite
+│   │   └── db/                   # Build and collect libhamt benchmarks here
+│   │       └── db.sqlite         # Reference benchmark database
 │   └── data/
 │       └── mojo_hamt_numbers.csv # Benchmark results (hamt-bench format)
-├── db.sqlite                  # Reference benchmark database (hamt-bench)
 ├── pixi.toml                  # Pixi configuration
 ├── README.md                  # Main documentation
 └── CLAUDE.md                  # Agent onboarding (this file)
@@ -46,6 +48,7 @@ mojo-learning/
 - `benchmarks/mojo/bench_numbers.mojo`: Main benchmark suite that outputs single operation performance metrics. Takes two arguments: measurement type (insert|query) and scale (number of entries).
 - `benchmarks/python/benchmarks.py`: ASV (Airspeed Velocity) benchmark harness that runs mojo benchmarks and tracks performance over time.
 - `benchmarks/data/Esteban-MBP2024.local/`: ASV benchmark results (JSON format) for Apple M4 Pro hardware.
+- `benchmarks/hamt-bench/`: **Git submodule** (https://github.com/eginez/hamt-bench) - This is where we build libhamt and collect benchmark data for comparison against mojo-hamt.
 - `benchmarks/hamt-bench/db/db.sqlite`: Reference benchmark database from hamt-bench. Contains libhamt, libhamt-pool, glib2, avl, rb, hsearch baseline results collected on **Apple M4 Pro** (same hardware as mojo-hamt benchmarks).
 - `pixi.toml`: The project configuration file. It defines dependencies and tasks for building, running, and testing. The `[tasks]` in this file are especially important.
 - `README.md`: The main project documentation, intended for human developers. It contains detailed information about architecture and benchmarking.
