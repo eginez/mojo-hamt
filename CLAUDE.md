@@ -43,9 +43,10 @@ mojo-learning/
 
 - `src/mojo/hamt.mojo`: The core source code for the HAMT data structure. This is the main implementation file.
 - `tests/mojo/test_hamt.mojo`: The test suite for the HAMT. It contains a comprehensive set of tests covering all features and edge cases.
-- `benchmarks/mojo/bench_numbers.mojo`: Main benchmark suite compatible with [hamt-bench](https://github.com/mkirchner/hamt-bench) format. Supports command-line arguments for scale selection.
-- `benchmarks/data/mojo_hamt_numbers.csv`: Benchmark results in hamt-bench format (product,gitcommit,epoch,benchmark,repeat,measurement,scale,ns).
-- `db.sqlite`: Reference benchmark database from hamt-bench (AMD Ryzen 7, 26GB RAM). Contains libhamt, glib2, avl, rb, hsearch baseline results. **Note: These benchmarks were run on different hardware (AMD Ryzen 7) than the Mojo benchmarks (Apple Silicon), so direct performance comparisons should account for hardware differences.**
+- `benchmarks/mojo/bench_numbers.mojo`: Main benchmark suite that outputs single operation performance metrics. Takes two arguments: measurement type (insert|query) and scale (number of entries).
+- `benchmarks/python/benchmarks.py`: ASV (Airspeed Velocity) benchmark harness that runs mojo benchmarks and tracks performance over time.
+- `benchmarks/data/Esteban-MBP2024.local/`: ASV benchmark results (JSON format) for Apple M4 Pro hardware.
+- `benchmarks/hamt-bench/db/db.sqlite`: Reference benchmark database from hamt-bench. Contains libhamt, libhamt-pool, glib2, avl, rb, hsearch baseline results collected on **Apple M4 Pro** (same hardware as mojo-hamt benchmarks).
 - `pixi.toml`: The project configuration file. It defines dependencies and tasks for building, running, and testing. The `[tasks]` in this file are especially important.
 - `README.md`: The main project documentation, intended for human developers. It contains detailed information about architecture and benchmarking.
 
@@ -79,30 +80,40 @@ However, a more conventional pixi approach would be to have a `test` task. Based
 
 ### **Benchmarking**
 
-To run benchmarks compatible with hamt-bench format:
+This project uses **ASV (Airspeed Velocity)** for performance tracking. Benchmarks are defined in `benchmarks/python/benchmarks.py` which calls the Mojo benchmark code.
+
+To run benchmarks:
 
 ```bash
-# Run with specific scales (recommended for testing)
-pixi run mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo 1000 10000
+# Run single benchmark (outputs ops/sec)
+pixi run mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo insert 1000
+pixi run mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo query 10000
 
-# Run with all default scales (1K, 10K, 100K, 1M - takes longer)
-pixi run mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo 1000 10000 100000 1000000
+# Run ASV benchmark suite
+cd benchmarks
+asv run
 
-# Or use defaults (no arguments = 1K, 10K, 100K, 1M)
-pixi run mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo
+# View results in browser
+asv publish
+asv preview
 ```
 
-This will:
-1. Run insert and query benchmarks with 10 repetitions each
-2. Print results to the console with summary statistics
-3. Save results to `benchmarks/data/mojo_hamt_numbers.csv` in hamt-bench format
+Benchmark results are stored in:
+- **ASV format**: `benchmarks/data/Esteban-MBP2024.local/*.json`
+- **libhamt database**: `benchmarks/hamt-bench/db/db.sqlite`
 
-The CSV file can be loaded with pandas for analysis and comparison with libhamt:
-```python
-import pandas as pd
-mojo_df = pd.read_csv('benchmarks/data/mojo_hamt_numbers.csv')
-# Compare with libhamt data from db.sqlite
-```
+#### Current Performance (Apple M4 Pro)
+
+**mojo-hamt vs libhamt comparison:**
+
+| Operation | Scale | mojo-hamt (ns/op) | libhamt (ns/op) | Performance Gap |
+|-----------|-------|-------------------|-----------------|-----------------|
+| Insert    | 1K    | 1,181.0          | 59.3            | 20x slower      |
+| Insert    | 10K   | 1,284.7          | 56.3            | 23x slower      |
+| Query     | 1K    | 590.0            | 41.7            | 14x slower      |
+| Query     | 10K   | 703.4            | 41.4            | 17x slower      |
+
+**Note**: Both implementations benchmarked on same hardware (Apple M4 Pro, 24GB RAM).
 
 ## 5. Agent Task Guidelines
 
