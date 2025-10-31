@@ -85,6 +85,67 @@ However, a more conventional pixi approach would be to have a `test` task. Based
 
 This project uses **ASV (Airspeed Velocity)** for performance tracking. Benchmarks are defined in `benchmarks/python/benchmarks.py` which calls the Mojo benchmark code.
 
+#### Building libhamt benchmarks (macOS)
+
+The `benchmarks/hamt-bench/` submodule contains libhamt benchmarks for comparison. To build on macOS:
+
+```bash
+# First time setup: initialize the hamt submodule
+git submodule update --init --recursive
+
+# Build libhamt benchmarks (requires bdw-gc via Homebrew)
+cd benchmarks/hamt-bench
+./build-macos.sh
+
+# The script automatically:
+# - Checks for Homebrew and bdw-gc installation
+# - Builds with proper CFLAGS and LDFLAGS for macOS
+# - Outputs binary to build/bench-hamt
+```
+
+**Note**: The `build-macos.sh` script handles the necessary flags for linking with Boehm GC on macOS:
+```bash
+make CFLAGS="-g -O2 -I$(brew --prefix bdw-gc)/include" LDFLAGS="-L$(brew --prefix bdw-gc)/lib"
+```
+
+#### Profiling libhamt with macOS Instruments
+
+To profile libhamt performance on macOS using Instruments:
+
+```bash
+cd benchmarks/hamt-bench
+
+# Run Time Profiler (CPU profiling) - default
+./profile-macos.sh
+
+# Run with different profiling template
+./profile-macos.sh "Allocations"    # Memory allocation tracking
+./profile-macos.sh "Leaks"          # Memory leak detection
+./profile-macos.sh "System Trace"   # System-level performance
+
+# List all available templates
+xctrace list templates
+```
+
+The script will:
+1. Build the benchmark with debug symbols (`-g`) and optimizations (`-O2`)
+2. Run Instruments with the specified template
+3. Save the trace file to `benchmarks/hamt-bench/profiles/libhamt_TIMESTAMP.trace`
+4. Automatically open the trace in Instruments.app
+
+**Profiling Templates Available:**
+- **Time Profiler**: CPU profiling, call stacks, hot paths
+- **Allocations**: Memory allocation patterns and growth
+- **Leaks**: Memory leak detection
+- **System Trace**: System calls, context switches, I/O
+
+**Analyzing Results:**
+- Open trace files: `open profiles/libhamt_TIMESTAMP.trace`
+- Focus on hot functions in `hamt_set`, `hamt_get`, and hash computation
+- Compare against mojo-hamt performance bottlenecks
+
+#### Running Mojo HAMT benchmarks
+
 To run benchmarks:
 
 ```bash

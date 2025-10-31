@@ -32,3 +32,4 @@ benchmarks/env/
 benchmarks/html/
 __pycache__/
 *.pyc
+*.trace/

@@ -112,12 +112,12 @@ struct HAMTNode[
     #
     # This gives you the actual child, it is a dense
     # array.
-    var children: List[UnsafePointer[HAMTNode[K, V]]]
+    var children: InlineArray[UnsafePointer[HAMTNode[K, V]], 64]
     var leaf_node: Optional[HAMTLeafNode[K, V]]
 
     fn __init__(out self):
         self.children_bitmap = 0
-        self.children = List[UnsafePointer[HAMTNode[K, V]]]()
+        self.children = InlineArray[UnsafePointer[HAMTNode[K, V]], 64](UnsafePointer[HAMTNode[K, V]]())
         self.leaf_node = Optional[HAMTLeafNode[K, V]]()
 
     fn add_value(mut self, key: K, value: V) -> Bool:
@@ -143,7 +143,9 @@ struct HAMTNode[
                 items.append(item.copy())
 
         # Recursively collect from children
-        for child in self.children:
+        var num_children = pop_count(self.children_bitmap)
+        for i in range(num_children):
+            var child = self.children[i]
             if child:
                 child[].collect_items(items)
 
@@ -153,14 +155,27 @@ struct HAMTNode[
         masked_chunked = UInt64(1) << UInt64(chunk_index)
         masked_bitmap = UInt64(masked_chunked - 1) & self.children_bitmap
         child_index = pop_count(masked_bitmap)
+
+        # Get current number of children before updating bitmap
+        var num_children = pop_count(self.children_bitmap)
+
+        # Update bitmap to include new child
         self.children_bitmap |= UInt64(masked_chunked)
+
+        # Shift existing children to the right to make room for new child
+        # Work backwards to avoid overwriting
+        for i in range(num_children, Int(child_index), -1):
+            self.children[i] = self.children[i - 1]
 
         # Allocate from arena instead of individual malloc
         var new_node_pointer = arena.allocate_node()
         new_node_pointer.init_pointee_move(HAMTNode[K, V]())
-        self.children.insert(Int(child_index), new_node_pointer)
+
+        # Insert new child at the calculated dense index
+        self.children[Int(child_index)] = new_node_pointer
         return new_node_pointer
 
+    @always_inline
     fn get_child(
         self, chunk_index: UInt8
     ) raises -> UnsafePointer[HAMTNode[K, V]]:
@@ -293,7 +308,8 @@ struct HAMT[
             return
 
         # Recursively cleanup children first
-        for child in node[].children:
+        for i in range(len(node[].children)):
+            var child = node[].children[i]
             if child:
                 self._cleanup_node(child)
 

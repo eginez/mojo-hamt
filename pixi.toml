@@ -12,7 +12,7 @@ build-bench = "mkdir -p dist && mojo build -g --debug-info-language Mojo -I src/
 test = "mojo test -I src/mojo tests/mojo/test_hamt.mojo"
 bench = "mojo run -I src/mojo benchmarks/mojo/bench_numbers.mojo 10000"
 bench-debug = "mojo run -g --debug-info-language Mojo -I src/mojo benchmarks/mojo/bench_numbers.mojo 10000"
-profile = { cmd = "xcrun xctrace record --template 'Time Profiler' --output hamt_profile.trace --launch -- dist/bench_numbers insert 100000", depends-on = ["build-bench"] }
+profile = { cmd = "xcrun xctrace record --template 'Time Profiler' --output hamt_profile.trace --launch -- dist/bench_numbers insert 10000", depends-on = ["build-bench"] }
 
 [dependencies]
 mojo = "<1.0.0"

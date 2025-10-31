@@ -1,5 +1,6 @@
 from testing import assert_equal, assert_true, assert_false
 from hamt import HAMTLeafNode, HAMTNode, HAMT
+from bit.bit import pop_count
 
 
 def test_hamt_leaf_node():
@@ -18,7 +19,8 @@ def test_hamt_leaf_node():
 def test_hamt_node_initialization():
     var node = HAMTNode[String, Int]()
     assert_equal(node.children_bitmap, 0)
-    assert_equal(len(node.children), 0)
+    # InlineArray always has length 64, check that bitmap shows 0 children
+    assert_equal(pop_count(node.children_bitmap), 0)
     print("✓ HAMTNode initialization tests passed")
 
 
