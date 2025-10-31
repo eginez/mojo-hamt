@@ -251,3 +251,114 @@ Currently tracked:
 - **`libhamt`** (C implementation)
 - **Python's `ContextVars`**
 - **Mojo's `Dict[K, V]`**
+
+## 7. Performance Optimization Roadmap: Matching libhamt
+
+### Current Status (as of 2025-10-30)
+
+**Performance Gap to libhamt:**
+- Insert 1K: **10x slower** (596 ns/op vs 59.3 ns/op)
+- Query 1K: **7x slower** (294 ns/op vs 41.7 ns/op)
+- Insert 10K: **21x slower** (1,199 ns/op vs 56.3 ns/op)
+- Query 10K: **22x slower** (925 ns/op vs 41.4 ns/op)
+
+**Current Implementation:**
+- Using `InlineArray[16]` for children (128 bytes per node)
+- NodeArena allocator (batches allocations but still calls malloc)
+- 6-bit hash chunks (max 64 children per node)
+- Node size: ~160 bytes
+
+**Root Causes of Performance Gap:**
+1. Large nodes (160 bytes vs libhamt's 16 bytes = 10x larger)
+2. No memory recycling (libhamt uses freelists)
+3. Still calling malloc via arena for every node
+4. Wasted space in InlineArray (always allocate 16 slots, may use only 2-3)
+
+### TODO: Implement libhamt's Pool Allocator Strategy
+
+#### Phase 1: Restructure Node to Use Pointers (not InlineArray)
+
+**Key Change:** Separate node structure from children storage
+
+- Change node to store **pointer to children array** instead of inline array
+- Store **exact number of children** to enable exact-size allocations
+- Children array allocated separately with exact size needed
+- Node size drops from ~160 bytes to ~48 bytes (3.3x smaller)
+
+**Why This Matters:**
+- libhamt nodes are 16 bytes because they only store: `{pointer to array, bitmap}`
+- Small nodes = better cache locality = faster
+- Exact-size arrays = no wasted memory
+
+#### Phase 2: Implement Pool Allocators for Children Arrays
+
+**Key Change:** Pre-allocate large chunks and serve arrays from pools
+
+- Create **32-64 separate pools**, one for each array size (1 child, 2 children, ..., 64 children)
+- Each pool pre-allocates huge chunks (e.g., 1GB) of that specific array size
+- Allocation = pointer arithmetic in pre-allocated chunk (no malloc!)
+- Deallocation = add to freelist (no free() call!)
+
+**Why This Matters:**
+- This is how libhamt achieves ~55ns/op performance
+- Most time in profiling was tcmalloc overhead - pools eliminate this
+- Freelist recycling means freed arrays are immediately reusable
+
+**How libhamt Does It:**
+- 32 pools initialized at HAMT creation
+- Each pool manages arrays of one specific size
+- `table_allocate(h, size)` → get from pool[size-1]
+- `table_free(h, ptr, size)` → return to pool[size-1] freelist
+
+#### Phase 3: Add Node Pool with Freelist Recycling
+
+**Key Change:** Pool for nodes themselves (not just children arrays)
+
+- Current NodeArena allocates but doesn't recycle
+- Add freelist to recycle freed nodes
+- When removing entries, return nodes to freelist instead of calling free()
+
+**Why This Matters:**
+- Nodes get reused from hot cache
+- Reduces allocation pressure
+- Better memory locality
+
+#### Phase 4: Optimize Array Extension/Copying
+
+**Key Change:** Use efficient bulk copying when adding children
+
+- When adding a child: allocate new array (size N+1), copy old N children, insert new one, free old array to pool
+- Use memcpy for bulk copying (not loops)
+- libhamt's `table_extend()` does this efficiently
+
+**Why This Matters:**
+- Fixes Query 10K regression (currently 22x slower)
+- Copying into new contiguous array is cache-friendly
+- Pool recycling makes old array immediately available
+
+### Expected Performance Impact
+
+| Optimization | Target Speedup | Cumulative Speedup |
+|--------------|----------------|-------------------|
+| Phase 1: Small nodes with pointers | 2-3x | 2-3x |
+| Phase 2: Children array pools | 3-5x | 6-15x |
+| Phase 3: Node pool with freelist | 1.5-2x | 9-30x |
+| Phase 4: Efficient array operations | 1.5-2x | 14-60x |
+
+**Target Result:** mojo-hamt reaching **~30-100 ns/op**, competitive with libhamt's ~55 ns/op
+
+### Key Insights from libhamt Architecture
+
+1. **Tiny nodes (16 bytes):** Only `{children_pointer, bitmap}` or `{key, value}`
+2. **Exact-size arrays:** 3 children = 24 bytes, not 512 bytes
+3. **Pool per size:** 32 pools (sizes 1-32), each with its own freelist
+4. **No malloc in hot path:** Allocations served from pre-allocated chunks
+5. **Immediate recycling:** Freed arrays go to freelist, reused instantly
+
+### Reference
+
+- libhamt source: `benchmarks/hamt-bench/lib/hamt/src/hamt.c`
+- Node structure: lines 38-49
+- Pool allocators: lines 147-299
+- Array operations: lines 301-321
+- Full profiling analysis: `benchmarks/PROFILING_REPORT.md`
