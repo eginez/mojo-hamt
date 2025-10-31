@@ -1,3 +1,3 @@
 [submodule "benchmarks/hamt-bench"]
 	path = benchmarks/hamt-bench
-	url = https://github.com/eginez/hamt-bench
+	url = git@github.com:eginez/hamt-bench
