@@ -25,7 +25,8 @@ comptime FILTER: UInt64 = 0x0FFFFFFFFFFFFFFF
 comptime MAX_CHILDREN = 64
 
 # Pool configuration - single large block for all children arrays
-comptime CHILDREN_POOL_SIZE = 65536  # Total pointers in pool (64K children slots)
+# Size calculation: ~30 slots per entry, so 4M slots ≈ 130K entries with headroom
+comptime CHILDREN_POOL_SIZE = 4194304  # 4M slots (32MB) - supports ~130K+ entries
 
 
 struct ChildrenPool[
@@ -40,17 +41,27 @@ struct ChildrenPool[
     var pool: UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]
     var next_index: Int
     var capacity: Int
+    # Telemetry for diagnostics
+    var total_allocations: Int
+    var fallback_allocations: Int
+    var total_slots_used: Int
     
     fn __init__(out self):
         """Pre-allocate large pool."""
         self.capacity = CHILDREN_POOL_SIZE
         self.pool = alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](self.capacity)
         self.next_index = 0
+        self.total_allocations = 0
+        self.fallback_allocations = 0
+        self.total_slots_used = 0
     
     fn __moveinit__(out self, deinit other: Self):
         self.pool = other.pool
         self.next_index = other.next_index
         self.capacity = other.capacity
+        self.total_allocations = other.total_allocations
+        self.fallback_allocations = other.fallback_allocations
+        self.total_slots_used = other.total_slots_used
     
     fn __del__(deinit self):
         """Free entire pool.
@@ -68,14 +79,30 @@ struct ChildrenPool[
     @always_inline
     fn allocate(mut self, size: Int) -> UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]:
         """Allocate array of given size from pool using bump allocation."""
+        self.total_allocations += 1
+        self.total_slots_used += size
+        
         if self.next_index + size > self.capacity:
             # Pool exhausted - fall back to malloc
+            self.fallback_allocations += 1
             return alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](size)
         
         # Bump allocation from pre-allocated pool
         var ptr = self.pool + self.next_index
         self.next_index += size
         return ptr
+    
+    fn print_stats(self):
+        """Print pool utilization statistics."""
+        print("=== ChildrenPool Statistics ===")
+        print("Total allocations:", self.total_allocations)
+        print("Fallback allocations (malloc):", self.fallback_allocations)
+        print("Total slots used:", self.total_slots_used)
+        print("Pool capacity:", self.capacity)
+        print("Pool utilization:", Float64(self.total_slots_used) / Float64(self.capacity) * 100, "%")
+        if self.fallback_allocations > 0:
+            print("⚠️  WARNING: Pool exhausted! Fallback to malloc occurred", self.fallback_allocations, "times")
+        print("===============================")
 
 
 struct HAMTLeafNode[
@@ -551,6 +578,10 @@ struct HAMT[
         result += "}"
         return result
 
+    fn print_pool_stats(self):
+        """Print ChildrenPool utilization statistics for diagnostics."""
+        self.children_pool.print_stats()
+    
     fn __repr__(self) -> String:
         """Returns repr representation of the HAMT."""
         return "HAMT(" + self.__str__() + ")"
