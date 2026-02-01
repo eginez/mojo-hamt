@@ -23,61 +23,8 @@ from utils import Variant
 comptime FILTER: UInt64 = 0x0FFFFFFFFFFFFFFF
 comptime logger = Logger()
 
-
-struct NodeArena[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
-](Movable):
-    """Arena allocator for HAMT nodes to reduce malloc overhead.
-
-    Allocates nodes in blocks of BLOCK_SIZE, dramatically reducing
-    the number of malloc calls from O(N) to O(N/BLOCK_SIZE).
-    """
-
-    var blocks: List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]
-    var current_block: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
-    var block_size: Int
-    var next_index: Int
-
-    fn __init__(out self, block_size: Int = 1024):
-        """Initialize arena with given block size (default 1024 nodes)."""
-        self.blocks = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
-        self.block_size = block_size
-        self.next_index = block_size  # Force allocation of first block
-        self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]()
-
-    fn __moveinit__(out self, deinit current: Self):
-        self.blocks = current.blocks^
-        self.current_block = current.current_block
-        self.block_size = current.block_size
-        self.next_index = current.next_index
-
-    fn allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
-        """Allocate a single node from the arena.
-
-        If current block is full, allocates a new block of block_size nodes.
-        Returns pointer to uninitialized memory.
-        """
-        # Need new block?
-        if self.next_index >= self.block_size:
-            self.current_block = alloc[HAMTNode[Self.K, Self.V]](
-                self.block_size
-            )
-            self.blocks.append(self.current_block)
-            self.next_index = 0
-
-        # Get next slot and advance
-        var node_ptr = self.current_block + self.next_index
-        self.next_index += 1
-        return node_ptr
-
-    fn __del__(deinit self):
-        """Free all allocated blocks."""
-        for block in self.blocks:
-            if block:
-                # Note: We don't call destroy_pointee on individual nodes
-                # The HAMT's __del__ handles node cleanup via tree traversal
-                block.free()
+# Maximum children per node (6-bit chunks = 64 possible children)
+comptime MAX_CHILDREN = 64
 
 
 struct HAMTLeafNode[
@@ -159,22 +106,6 @@ struct HAMTInternalNode[
             if child:
                 child[].collect_items(items)
 
-    fn _grow_children_array(mut self, new_capacity: Int):
-        """Grow children array to new capacity."""
-        # Allocate new array using alloc function
-        var new_array = alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](new_capacity)
-        
-        # Copy existing children
-        var n = self.num_children()
-        for i in range(n):
-            new_array[i] = self.children[i]
-        
-        # Free old array and update pointer
-        if self.children:
-            self.children.free()
-        self.children = new_array
-        self.capacity = new_capacity
-
     fn add_child(
         mut self, chunk_index: UInt8, mut arena: NodeArena[Self.K, Self.V], is_internal: Bool
     ) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
@@ -213,6 +144,22 @@ struct HAMTInternalNode[
         # Insert new child at the calculated dense index
         self.children[child_index] = new_node_pointer
         return new_node_pointer
+
+    fn _grow_children_array(mut self, new_capacity: Int):
+        """Grow children array to new capacity."""
+        # Allocate new array using alloc function
+        var new_array = alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](new_capacity)
+        
+        # Copy existing children
+        var n = self.num_children()
+        for i in range(n):
+            new_array[i] = self.children[i]
+        
+        # Free old array and update pointer
+        if self.children:
+            self.children.free()
+        self.children = new_array
+        self.capacity = new_capacity
 
     @always_inline
     fn get_child(
@@ -316,6 +263,61 @@ struct HAMTNode[
             for item in self.data[HAMTLeafNode[Self.K,Self.V]]._items:
                 items.append(item.copy())
 
+
+struct NodeArena[
+    K: Movable & Copyable & Hashable & Equatable & Stringable,
+    V: Movable & Copyable & Stringable,
+](Movable):
+    """Arena allocator for HAMT nodes to reduce malloc overhead.
+
+    Allocates nodes in blocks of BLOCK_SIZE, dramatically reducing
+    the number of malloc calls from O(N) to O(N/BLOCK_SIZE).
+    """
+
+    var blocks: List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]
+    var current_block: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
+    var block_size: Int
+    var next_index: Int
+
+    fn __init__(out self, block_size: Int = 1024):
+        """Initialize arena with given block size (default 1024 nodes)."""
+        self.blocks = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
+        self.block_size = block_size
+        self.next_index = block_size  # Force allocation of first block
+        self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]()
+
+    fn __moveinit__(out self, deinit current: Self):
+        self.blocks = current.blocks^
+        self.current_block = current.current_block
+        self.block_size = current.block_size
+        self.next_index = current.next_index
+
+    fn allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
+        """Allocate a single node from the arena.
+
+        If current block is full, allocates a new block of block_size nodes.
+        Returns pointer to uninitialized memory.
+        """
+        # Need new block?
+        if self.next_index >= self.block_size:
+            self.current_block = alloc[HAMTNode[Self.K, Self.V]](
+                self.block_size
+            )
+            self.blocks.append(self.current_block)
+            self.next_index = 0
+
+        # Get next slot and advance
+        var node_ptr = self.current_block + self.next_index
+        self.next_index += 1
+        return node_ptr
+
+    fn __del__(deinit self):
+        """Free all allocated blocks."""
+        for block in self.blocks:
+            if block:
+                # Note: We don't call destroy_pointee on individual nodes
+                # The HAMT's __del__ handles node cleanup via tree traversal
+                block.free()
 
 
 struct HAMT[
