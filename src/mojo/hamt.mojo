@@ -9,6 +9,7 @@ from collections import List
 from memory import UnsafePointer, alloc
 from testing import assert_equal, assert_true
 from bit.bit import pop_count
+from time import perf_counter_ns
 from sys.param_env import env_get_string
 from os import env
 from python import PythonObject
@@ -439,12 +440,19 @@ struct HAMT[
     K: Movable & Copyable & Hashable & Equatable & Stringable,
     V: Movable & Copyable & Stringable,
 ](Defaultable, Movable, Representable, Sized, Stringable):
-    # Profiling counters (static fields)
+    # Profiling counters
     var _profile_internal_visits: Int
     var _profile_leaf_visits: Int
     var _profile_bitmap_hits: Int
     var _profile_bitmap_misses: Int
     var _profile_getchild_calls: Int
+    
+    # Timing instrumentation (nanoseconds)
+    var _time_hash_total: Int
+    var _time_traverse_total: Int
+    var _time_leaf_total: Int
+    var _time_total: Int
+    var _op_count: Int
     
     var root: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
     var _size: Int
@@ -460,6 +468,12 @@ struct HAMT[
         self._profile_bitmap_hits = 0
         self._profile_bitmap_misses = 0
         self._profile_getchild_calls = 0
+        # Initialize timing fields
+        self._time_hash_total = 0
+        self._time_traverse_total = 0
+        self._time_leaf_total = 0
+        self._time_total = 0
+        self._op_count = 0
         # Initialize arena and children pool
         self.arena = NodeArena[Self.K, Self.V](block_size=1024)
         self.children_pool = ChildrenPool[Self.K, Self.V]()
@@ -478,6 +492,12 @@ struct HAMT[
         self._profile_bitmap_hits = 0
         self._profile_bitmap_misses = 0
         self._profile_getchild_calls = 0
+        # Initialize timing fields
+        self._time_hash_total = 0
+        self._time_traverse_total = 0
+        self._time_leaf_total = 0
+        self._time_total = 0
+        self._op_count = 0
         # Initialize arena and children pool
         self.arena = NodeArena[Self.K, Self.V](block_size=1024)
         self.children_pool = ChildrenPool[Self.K, Self.V]()
@@ -494,6 +514,11 @@ struct HAMT[
         self._profile_bitmap_hits = current._profile_bitmap_hits
         self._profile_bitmap_misses = current._profile_bitmap_misses
         self._profile_getchild_calls = current._profile_getchild_calls
+        self._time_hash_total = current._time_hash_total
+        self._time_traverse_total = current._time_traverse_total
+        self._time_leaf_total = current._time_leaf_total
+        self._time_total = current._time_total
+        self._op_count = current._op_count
         self.root = current.root
         self._custom_hash_fn = current._custom_hash_fn^
         self._max_level = current._max_level
@@ -649,6 +674,18 @@ struct HAMT[
         print("Avg children per internal node:", avg_children)
         print("Total children pointers:", total_children)
         print("======================================\n")
+
+    fn print_timing_stats(self):
+        """Print detailed timing statistics for performance analysis."""
+        print("\n=== HAMT Timing Statistics ===")
+        print("Operation count:", self._op_count)
+        if self._op_count > 0:
+            print("Avg time per op (ns):", self._time_total // self._op_count)
+            print("Time hashing (ns):", self._time_hash_total)
+            print("Time traversing (ns):", self._time_traverse_total)
+            print("Time leaf operations (ns):", self._time_leaf_total)
+            print("Time total (ns):", self._time_total)
+        print("=============================\n")
 
     fn __del__(deinit self):
         # Clean up node contents (Lists, etc.) but don't free individual nodes
