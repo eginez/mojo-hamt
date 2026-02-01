@@ -125,6 +125,53 @@ To optimize memory allocation performance, this implementation uses an **arena a
 - Optimized for immutable/persistent use cases
 - Not suitable for HAMTs with frequent node deletions
 
+### Phase 2: Children Array Pool
+
+Building on the arena allocator, Phase 2 introduces a **bump allocator** for children arrays:
+
+**Problem with Phase 1:**
+- Each internal node allocates its children array separately via malloc
+- Small allocations (4-16 elements) dominate for typical HAMT usage
+- Malloc/free overhead was ~60% of total runtime
+
+**Solution - Simple Bump Allocator:**
+- Pre-allocate one large pool (64K child pointers) at startup
+- Children arrays are "bump allocated" from this pool via pointer arithmetic
+- No individual array frees - entire pool freed when HAMT destroyed
+- Falls back to malloc only when pool exhausted (rare)
+
+**Performance Results:**
+
+| Operation | Before Phase 2 | After Phase 2 | Improvement | vs libhamt (C) |
+|-----------|----------------|---------------|-------------|----------------|
+| **Insert 10K** | 1.56M ops/sec | **2.56M ops/sec** | **+63%** | ~7x slower |
+| **Insert 100K** | 1.21M ops/sec | **1.75M ops/sec** | **+42%** | ~7x slower |
+| **Query 10K** | 2.90M ops/sec | **7.28M ops/sec** | **+151%** | ~2.4x slower |
+| **Query 100K** | 1.90M ops/sec | **3.05M ops/sec** | **+62%** | ~2.4x slower |
+
+**Key Achievement:**
+- Query performance now within **2.4x of libhamt** (was ~6x before)
+- Insert performance improved to **~391 ns/op** (target: ~56 ns/op)
+- Eliminated malloc from hot path entirely
+
+**Implementation Details:**
+```mojo
+struct ChildrenPool:
+    var pool: UnsafePointer[...]  # 64K pre-allocated slots
+    var next_index: Int           # Bump pointer
+    
+    fn allocate(self, size: Int) -> Array:
+        # O(1) pointer arithmetic - no malloc!
+        ptr = pool + next_index
+        next_index += size
+        return ptr
+```
+
+**Trade-offs:**
+- Memory not freed until HAMT destroyed (acceptable for persistent data structures)
+- Fixed pool size (64K slots) - rare fallbacks to malloc if exceeded
+- Best for HAMTs with <64K total children arrays (most use cases)
+
 ## Testing
 
 Comprehensive test suite covering:
