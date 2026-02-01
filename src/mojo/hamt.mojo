@@ -114,21 +114,23 @@ struct HAMTLeafNode[
     fn __init__(out self):
         self._items = List[Tuple[Self.K, Self.V]]()
 
-    fn __init__(out self, key: Self.K, value: Self.V):
+    fn __init__(out self, var key: Self.K, var value: Self.V):
         self._items = List[Tuple[Self.K, Self.V]]()
-        _ = self.add(key, value)
+        _ = self.add(key^, value^)
 
-    fn add(mut self, key: Self.K, value: Self.V) -> Bool:
+    fn add(mut self, var key: Self.K, var value: Self.V) -> Bool:
         """Add or update a key-value pair. Returns True if a new key was added, False if updated.
+        
+        Uses move semantics to avoid unnecessary copies. Takes ownership of key and value.
         """
-        # TODO: fix all the copying going on here and
-        # in set!!
-        # look here: https://github.com/modular/modular/issues/4695
+        # Check for existing key - need to compare before moving
         for i in range(len(self._items)):
             if self._items[i][0] == key:
-                self._items[i] = (key.copy(), value.copy())
+                # Update existing - move new values in
+                self._items[i] = (key^, value^)
                 return False
-        self._items.append(Tuple(key.copy(), value.copy()))
+        # New key - move values into tuple
+        self._items.append((key^, value^))
         return True
 
     fn get(self, key: Self.K) -> Optional[Self.V]:
@@ -295,8 +297,8 @@ struct HAMTNode[
     fn __init__(out self):
         self.data = Self._HAMTNode(HAMTInternalNode[Self.K,Self.V]())
 
-    fn __init__(out self, key: Self.K, value: Self.V):
-        self.data = Self._HAMTNode(HAMTLeafNode[Self.K,Self.V](key, value))
+    fn __init__(out self, var key: Self.K, var value: Self.V):
+        self.data = Self._HAMTNode(HAMTLeafNode[Self.K,Self.V](key^, value^))
 
     fn __init__(out self, var leaf: HAMTLeafNode[Self.K, Self.V]):
         self.data = Self._HAMTNode(leaf^)
@@ -324,11 +326,11 @@ struct HAMTNode[
         return self.data[HAMTLeafNode[Self.K,Self.V]].get(key)
 
     @always_inline
-    fn add_value(mut self, key: Self.K, value: Self.V) raises -> Bool:
+    fn add_value(mut self, var key: Self.K, var value: Self.V) raises -> Bool:
         if self.is_internal():
             raise Error("Can not add value to internal node")
 
-        return self.data[HAMTLeafNode[Self.K,Self.V]].add(key, value)
+        return self.data[HAMTLeafNode[Self.K,Self.V]].add(key^, value^)
 
 
     @always_inline
@@ -492,9 +494,10 @@ struct HAMT[
 
         return curr_node[].get_value(key)
 
-    fn set(mut self, key: Self.K, value: Self.V) raises:
+    fn set(mut self, var key: Self.K, var value: Self.V) raises:
         var curr_level: UInt16 = 0
         var curr_node = self.root
+        # Hash before moving (need to borrow key)
         var hashed_key = self._calculate_hash(key)
 
         while curr_level < self._max_level:
@@ -508,7 +511,8 @@ struct HAMT[
             curr_node = next_node
             curr_level += 1
 
-        var is_new_key = curr_node[].add_value(key, value)
+        # Move key and value into leaf node
+        var is_new_key = curr_node[].add_value(key^, value^)
         if is_new_key:
             self._size += 1
 
@@ -559,8 +563,8 @@ struct HAMT[
         # TODO: why copy??
         return result.value().copy()
 
-    fn __setitem__(mut self, key: Self.K, value: Self.V) raises:
-        self.set(key, value)
+    fn __setitem__(mut self, var key: Self.K, var value: Self.V) raises:
+        self.set(key^, value^)
 
     fn __str__(self) -> String:
         """Returns string representation of the HAMT in dict-like format."""
