@@ -365,16 +365,18 @@ struct NodeArena[
     K: Movable & Copyable & Hashable & Equatable & Stringable,
     V: Movable & Copyable & Stringable,
 ](Movable):
-    """Arena allocator for HAMT nodes to reduce malloc overhead.
+    """Arena allocator for HAMT nodes with freelist recycling.
 
-    Allocates nodes in blocks of BLOCK_SIZE, dramatically reducing
-    the number of malloc calls from O(N) to O(N/BLOCK_SIZE).
+    Phase 3 optimization: Allocates nodes in blocks and recycles freed nodes
+    through a freelist, reducing both malloc overhead and memory fragmentation.
     """
 
     var blocks: List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]
     var current_block: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
     var block_size: Int
     var next_index: Int
+    # Phase 3: Freelist for recycling nodes
+    var freelist: List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]
 
     fn __init__(out self, block_size: Int = 1024):
         """Initialize arena with given block size (default 1024 nodes)."""
@@ -382,19 +384,26 @@ struct NodeArena[
         self.block_size = block_size
         self.next_index = block_size  # Force allocation of first block
         self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]()
+        self.freelist = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
 
     fn __moveinit__(out self, deinit current: Self):
         self.blocks = current.blocks^
         self.current_block = current.current_block
         self.block_size = current.block_size
         self.next_index = current.next_index
+        self.freelist = current.freelist^
 
     fn allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         """Allocate a single node from the arena.
 
-        If current block is full, allocates a new block of block_size nodes.
+        Phase 3: First tries to reuse a node from the freelist. If freelist is empty,
+        allocates from the current block. If current block is full, allocates a new block.
         Returns pointer to uninitialized memory.
         """
+        # Phase 3: Try freelist first (hot cache, zero malloc!)
+        if len(self.freelist) > 0:
+            return self.freelist.pop()
+        
         # Need new block?
         if self.next_index >= self.block_size:
             self.current_block = alloc[HAMTNode[Self.K, Self.V]](
@@ -407,6 +416,15 @@ struct NodeArena[
         var node_ptr = self.current_block + self.next_index
         self.next_index += 1
         return node_ptr
+
+    fn free_node(mut self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]):
+        """Return a node to the freelist for reuse.
+        
+        Phase 3: Instead of leaking freed nodes, add them to the freelist.
+        The caller is responsible for cleaning up the node's contents before calling this.
+        """
+        if node:
+            self.freelist.append(node)
 
     fn __del__(deinit self):
         """Free all allocated blocks."""
@@ -421,6 +439,13 @@ struct HAMT[
     K: Movable & Copyable & Hashable & Equatable & Stringable,
     V: Movable & Copyable & Stringable,
 ](Defaultable, Movable, Representable, Sized, Stringable):
+    # Profiling counters (static fields)
+    var _profile_internal_visits: Int
+    var _profile_leaf_visits: Int
+    var _profile_bitmap_hits: Int
+    var _profile_bitmap_misses: Int
+    var _profile_getchild_calls: Int
+    
     var root: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
     var _size: Int
     var _max_level: UInt16
@@ -429,6 +454,12 @@ struct HAMT[
     var children_pool: ChildrenPool[Self.K, Self.V]  # Simple bump allocator for children arrays
 
     fn __init__(out self):
+        # Initialize profiling counters
+        self._profile_internal_visits = 0
+        self._profile_leaf_visits = 0
+        self._profile_bitmap_hits = 0
+        self._profile_bitmap_misses = 0
+        self._profile_getchild_calls = 0
         # Initialize arena and children pool
         self.arena = NodeArena[Self.K, Self.V](block_size=1024)
         self.children_pool = ChildrenPool[Self.K, Self.V]()
@@ -441,6 +472,12 @@ struct HAMT[
         self._size = 0
 
     fn __init__(out self, hash_fn: fn (Self.K) -> UInt64):
+        # Initialize profiling counters
+        self._profile_internal_visits = 0
+        self._profile_leaf_visits = 0
+        self._profile_bitmap_hits = 0
+        self._profile_bitmap_misses = 0
+        self._profile_getchild_calls = 0
         # Initialize arena and children pool
         self.arena = NodeArena[Self.K, Self.V](block_size=1024)
         self.children_pool = ChildrenPool[Self.K, Self.V]()
@@ -452,6 +489,11 @@ struct HAMT[
         self._size = 0
 
     fn __moveinit__(out self, deinit current: Self):
+        self._profile_internal_visits = current._profile_internal_visits
+        self._profile_leaf_visits = current._profile_leaf_visits
+        self._profile_bitmap_hits = current._profile_bitmap_hits
+        self._profile_bitmap_misses = current._profile_bitmap_misses
+        self._profile_getchild_calls = current._profile_getchild_calls
         self.root = current.root
         self._custom_hash_fn = current._custom_hash_fn^
         self._max_level = current._max_level
@@ -519,6 +561,94 @@ struct HAMT[
         var is_new_key = curr_node[].add_value(key^, value^)
         if is_new_key:
             self._size += 1
+    
+    fn _count_tree_depth(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], current_depth: Int) -> Int:
+        """Recursively count max tree depth for diagnostics."""
+        if not node:
+            return current_depth
+        
+        if node[].is_internal():
+            var max_depth = current_depth
+            var num_children = node[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
+            for i in range(num_children):
+                var child = node[].data[HAMTInternalNode[Self.K,Self.V]].children[i]
+                var child_depth = self._count_tree_depth(child, current_depth + 1)
+                if child_depth > max_depth:
+                    max_depth = child_depth
+            return max_depth
+        else:
+            # Leaf node - return current depth
+            return current_depth
+    
+    fn _count_internal_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
+        """Recursively count internal nodes for diagnostics."""
+        if not node or not node[].is_internal():
+            return 0
+        
+        var count = 1  # Count this internal node
+        var num_children = node[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
+        for i in range(num_children):
+            var child = node[].data[HAMTInternalNode[Self.K,Self.V]].children[i]
+            count += self._count_internal_nodes(child)
+        return count
+    
+    fn _count_leaf_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
+        """Recursively count leaf nodes for diagnostics."""
+        if not node:
+            return 0
+        
+        if not node[].is_internal():
+            return 1  # This is a leaf
+        
+        var count = 0
+        var num_children = node[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
+        for i in range(num_children):
+            var child = node[].data[HAMTInternalNode[Self.K,Self.V]].children[i]
+            count += self._count_leaf_nodes(child)
+        return count
+    
+    fn _calc_avg_children_per_internal_node(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Tuple[Int, Int, Float64]:
+        """Calculate average children per internal node.
+        
+        Returns: (total_internal_nodes, total_children, avg_children_per_node)
+        """
+        if not node or not node[].is_internal():
+            return (0, 0, 0.0)
+        
+        var internal_count = self._count_internal_nodes(node)
+        
+        # Count total children across all internal nodes using iterative stack
+        var total_children = 0
+        var stack = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
+        stack.append(node)
+        
+        while len(stack) > 0:
+            var current = stack.pop()
+            if not current or not current[].is_internal():
+                continue
+            
+            var num = current[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
+            total_children += num
+            
+            for i in range(num):
+                var child = current[].data[HAMTInternalNode[Self.K,Self.V]].children[i]
+                if child:
+                    stack.append(child)
+        
+        var avg = Float64(total_children) / Float64(internal_count) if internal_count > 0 else 0.0
+        return (internal_count, total_children, avg)
+    
+    fn print_tree_stats(self):
+        """Print detailed tree structure statistics for performance analysis."""
+        print("\n=== HAMT Tree Structure Statistics ===")
+        print("Total entries:", self._size)
+        print("Max tree depth:", self._count_tree_depth(self.root, 0), "/", self._max_level)
+        print("Internal nodes:", self._count_internal_nodes(self.root))
+        print("Leaf nodes:", self._count_leaf_nodes(self.root))
+        var (internal_count, total_children, avg_children) = self._calc_avg_children_per_internal_node(self.root)
+        print("Avg children per internal node:", avg_children)
+        print("Total children pointers:", total_children)
+        print("======================================\n")
 
     fn __del__(deinit self):
         # Clean up node contents (Lists, etc.) but don't free individual nodes
@@ -589,6 +719,8 @@ struct HAMT[
     fn print_pool_stats(self):
         """Print ChildrenPool utilization statistics for diagnostics."""
         self.children_pool.print_stats()
+    
+
     
     fn __repr__(self) -> String:
         """Returns repr representation of the HAMT."""

@@ -45,6 +45,9 @@ fn profile_queries(scale: Int) raises:
     hamt.print_pool_stats()
     print()
     
+    print("Tree structure after pre-population:")
+    hamt.print_tree_stats()
+    
     print("Starting query profiling for", scale, "operations...")
     var start = perf_counter_ns()
     
