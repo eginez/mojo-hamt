@@ -68,14 +68,44 @@ Sequential integer keys (0, 1, 2, ...) have hash values that diverge slowly:
 
 ### Benchmark Results (Phase 3)
 
-| Scale | Operation | Throughput | Latency | vs libhamt |
-|-------|-----------|------------|---------|------------|
-| 1K | Insert | - | - | - |
-| 1K | Query | - | - | - |
-| 10K | Insert | - | - | - |
-| 10K | Query | - | - | - |
-| 100K | Insert | 6.82M ops/sec | **147 ns/op** | **2.6x slower** |
-| 100K | Query | 3.28M ops/sec | **305 ns/op** | **7.4x slower** |
+| Scale | Operation | Pattern | Throughput | Latency | vs libhamt |
+|-------|-----------|---------|------------|---------|------------|
+| 1K | Insert | Sequential | 4.20M ops/sec | 238 ns/op | 4.2x slower |
+| 1K | Insert | Shuffled | 5.08M ops/sec | **197 ns/op** | **3.5x slower** |
+| 10K | Insert | Sequential | 3.85M ops/sec | 260 ns/op | 4.6x slower |
+| 10K | Insert | Shuffled | 4.66M ops/sec | **215 ns/op** | **3.8x slower** |
+| 100K | Insert | Sequential | 2.51M ops/sec | 399 ns/op | 7.1x slower |
+| 100K | Insert | Shuffled | 2.46M ops/sec | 406 ns/op | 7.2x slower |
+| 1K | Query | Sequential | 8.06M ops/sec | **124 ns/op** | **3.0x slower** |
+| 1K | Query | Shuffled | 7.63M ops/sec | 131 ns/op | 3.2x slower |
+| 10K | Query | Sequential | 7.49M ops/sec | **134 ns/op** | **3.3x slower** |
+| 10K | Query | Shuffled | 6.81M ops/sec | 147 ns/op | 3.6x slower |
+| 100K | Query | Sequential | 3.26M ops/sec | 306 ns/op | 7.5x slower |
+| 100K | Query | Shuffled | 2.40M ops/sec | 416 ns/op | 10.1x slower |
+
+### Key Discovery: Query Pattern Matters!
+
+**Critical Finding**: libhamt uses **shuffled queries** (random access order), not sequential!
+
+| Pattern | Insert 10K | Query 10K | Query 100K |
+|---------|------------|-----------|------------|
+| **Sequential** | 260 ns | **134 ns** | 306 ns |
+| **Shuffled** | 215 ns | 147 ns | **416 ns** |
+
+**Impact of Shuffled Queries**:
+- **10K scale**: 10% slower (147 vs 134 ns) - minor difference
+- **100K scale**: **36% slower** (416 vs 306 ns) - significant cache effect
+
+**Why Shuffled is Slower**:
+- Random access pattern defeats CPU prefetcher
+- Cache misses on every lookup (tree nodes not in cache)
+- More realistic for many real-world workloads
+- Sequential queries are "best case" scenario
+
+**For Fair Comparison with libhamt**:
+- Use **shuffled query** numbers when comparing
+- At 10K: **215 ns insert, 147 ns query** (3.8x and 3.6x slower than libhamt)
+- Sequential benchmarks show "best possible" performance
 
 ### Phase-by-Phase Improvements
 
@@ -188,7 +218,8 @@ Pool utilization: 70.7%
 
 ### 3. **Benchmark Data Patterns Matter**
 - Sequential integers create pathological case
-- Real-world data likely has better distribution
+- **Query pattern matters**: Sequential (cached) vs shuffled (cache misses)
+- libhamt uses shuffled queries - we must match methodology for fair comparison
 - Need benchmarks with varied key patterns
 
 ### 4. **Infrastructure is Worth It**
@@ -225,6 +256,21 @@ fn allocate_node()  // Checks freelist first
 pixi run mojo run -I src/mojo benchmarks/mojo/profile_bench.mojo
 // Shows performance + tree structure + pool stats
 ```
+
+### 4. **Enhanced Benchmark Suite** (NEW!)
+```bash
+# Run single pattern
+pixi run mojo run -I src/mojo benchmarks/mojo/bench_enhanced.mojo shuffled query 10000
+
+# Run full suite
+./benchmarks/run_enhanced_suite.sh
+# Tests: sequential, shuffled, random × insert, query × 1K, 10K, 100K
+```
+
+**Patterns**:
+- `sequential`: Keys 0, 1, 2, ... (best case)
+- `shuffled`: Keys 0..N-1 in random order (matches libhamt)
+- `random`: Random Int64 keys
 
 ---
 
