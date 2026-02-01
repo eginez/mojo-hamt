@@ -118,6 +118,7 @@ struct HAMTLeafNode[
         self._items = List[Tuple[Self.K, Self.V]]()
         _ = self.add(key^, value^)
 
+    @always_inline
     fn add(mut self, var key: Self.K, var value: Self.V) -> Bool:
         """Add or update a key-value pair. Returns True if a new key was added, False if updated.
         
@@ -133,6 +134,7 @@ struct HAMTLeafNode[
         self._items.append((key^, value^))
         return True
 
+    @always_inline
     fn get(self, key: Self.K) -> Optional[Self.V]:
         for item in self._items:
             if item[0] == key:
@@ -477,6 +479,7 @@ struct HAMT[
 
         return filtered_key
 
+    @always_inline
     fn get(self, key: Self.K) raises -> Optional[Self.V]:
         var curr_level: UInt16 = 0
         var curr_node = self.root
@@ -494,6 +497,7 @@ struct HAMT[
 
         return curr_node[].get_value(key)
 
+    @always_inline
     fn set(mut self, var key: Self.K, var value: Self.V) raises:
         var curr_level: UInt16 = 0
         var curr_node = self.root
