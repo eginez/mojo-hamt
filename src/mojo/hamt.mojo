@@ -21,7 +21,6 @@ from utils import Variant
 # Clears the highest 4 bits of the UInt64
 # used to truncate the hash
 comptime FILTER: UInt64 = 0x0FFFFFFFFFFFFFFF
-
 # Maximum children per node (6-bit chunks = 64 possible children)
 comptime MAX_CHILDREN = 64
 
@@ -530,7 +529,6 @@ struct HAMT[
     fn _get_next_chunk(self, hashed_key: UInt64, level: UInt16) -> UInt8:
         return UInt8((hashed_key >> UInt64(6 * level)) & 0x3F)
 
-    @always_inline
     fn _calculate_hash(self, key: Self.K) -> UInt64:
         """Returns an integer of size 60 bits, by clearing the top 4 bits."""
         var hashed_key: UInt64
