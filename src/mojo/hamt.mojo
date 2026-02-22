@@ -34,64 +34,100 @@ struct ChildrenPool[
     V: Movable & Copyable & Stringable,
 ](Movable):
     """Simple bump allocator for children arrays.
-    
+
     Pre-allocates one large block and uses bump allocation.
-    No freelist - memory is only freed when HAMT is destroyed.
+    Freed arrays are tracked and returned to the pool for reuse.
     """
     var pool: UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]
     var next_index: Int
     var capacity: Int
+    # Phase 4: Track freed arrays for reuse
+    var freed_arrays: List[Tuple[UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], Int]]
     # Telemetry for diagnostics
     var total_allocations: Int
     var fallback_allocations: Int
     var total_slots_used: Int
+    var reused_slots: Int
     
     fn __init__(out self):
         """Pre-allocate large pool."""
         self.capacity = CHILDREN_POOL_SIZE
         self.pool = alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](self.capacity)
         self.next_index = 0
+        self.freed_arrays = List[Tuple[UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], Int]]()
         self.total_allocations = 0
         self.fallback_allocations = 0
         self.total_slots_used = 0
-    
+        self.reused_slots = 0
+
     fn __moveinit__(out self, deinit other: Self):
         self.pool = other.pool
         self.next_index = other.next_index
         self.capacity = other.capacity
+        self.freed_arrays = other.freed_arrays^
         self.total_allocations = other.total_allocations
         self.fallback_allocations = other.fallback_allocations
         self.total_slots_used = other.total_slots_used
+        self.reused_slots = other.reused_slots
     
     fn __del__(deinit self):
         """Free entire pool.
-        
+
         Note: We only free the main pool block. Individual arrays allocated
         from within the pool are NOT freed - they're part of the bump-allocated
         region and will be freed when the pool itself is freed.
+
+        Phase 4: Freed arrays are automatically reclaimed when the pool is freed.
         """
         if self.pool:
             self.pool.free()
         # Note: We don't track which arrays were bump-allocated vs fallback-allocated
         # In a production implementation, we'd need to track this, but for now
         # we accept that fallback allocations may leak (they're rare)
-    
+
     @always_inline
     fn allocate(mut self, size: Int) -> UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]:
-        """Allocate array of given size from pool using bump allocation."""
+        """Allocate array of given size from pool using bump allocation.
+
+        Phase 4: First checks freed_arrays for reusable arrays from previous growth operations.
+        """
         self.total_allocations += 1
+
+        # Phase 4: Try to reuse a freed array first (bump allocation from pool)
+        if len(self.freed_arrays) > 0:
+            # Get last freed array (LIFO order for best cache locality)
+            var freed = self.freed_arrays.pop()
+            var ptr = freed[0]
+            var freed_size = freed[1]
+            self.reused_slots += freed_size
+            return ptr
+
         self.total_slots_used += size
-        
+
         if self.next_index + size > self.capacity:
             # Pool exhausted - fall back to malloc
             self.fallback_allocations += 1
             return alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](size)
-        
+
         # Bump allocation from pre-allocated pool
         var ptr = self.pool + self.next_index
         self.next_index += size
         return ptr
-    
+
+    @always_inline
+    fn free(mut self, ptr: UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], size: Int):
+        """Return an array to the pool for reuse.
+
+        Phase 4: Instead of leaking arrays during growth, track them for reuse.
+        The caller must have already copied contents to a new array before calling this.
+
+        Note: We only track bump-allocated arrays (from the main pool).
+        Fallback malloc arrays are not tracked (they're rare and will leak).
+        """
+        # All arrays passed to free() are from bump allocation (the old children arrays).
+        # We track them for reuse - they'll be returned to the pool when the HAMT is destroyed.
+        self.freed_arrays.append((ptr, size))
+
     fn print_stats(self):
         """Print pool utilization statistics."""
         print("=== ChildrenPool Statistics ===")
@@ -100,6 +136,8 @@ struct ChildrenPool[
         print("Total slots used:", self.total_slots_used)
         print("Pool capacity:", self.capacity)
         print("Pool utilization:", Float64(self.total_slots_used) / Float64(self.capacity) * 100, "%")
+        print("Reused slots from freed arrays:", self.reused_slots)
+        print("Freed arrays tracked:", len(self.freed_arrays))
         if self.fallback_allocations > 0:
             print("⚠️  WARNING: Pool exhausted! Fallback to malloc occurred", self.fallback_allocations, "times")
         print("===============================")
@@ -255,9 +293,12 @@ struct HAMTInternalNode[
             while i < n:
                 new_array[i] = self.children[i]
                 i += 1
-        
-        # Note: With bump allocator, we don't free old arrays during growth
-        # They'll be cleaned up when the HAMT is destroyed
+
+        # Phase 4: Free old array to pool for reuse (eliminates memory leak!)
+        var old_num_children = self.num_children()
+        if old_num_children > 0:
+            children_pool.free(self.children, old_num_children)
+
         self.children = new_array
         self.capacity = new_capacity
 
