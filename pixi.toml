@@ -15,7 +15,7 @@ bench-debug = "mojo run -g --debug-info-language Mojo -I src/mojo benchmarks/moj
 profile = { cmd = "xcrun xctrace record --template 'Time Profiler' --output hamt_profile.trace --launch -- dist/bench_numbers insert 10000", depends-on = ["build-bench"] }
 
 [dependencies]
-mojo = "<1.0.0"
+mojo = "1.0.0b2.dev2026050106"
 python = ">=3.12,<3.13"
 pandas = ">=2.3.3,<3"
 asv = ">=0.6.5,<0.7"
