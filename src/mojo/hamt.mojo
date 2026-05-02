@@ -497,6 +497,7 @@ struct HAMT[
     var root: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
     var _size: Int
     var _max_level: UInt16
+    var _custom_hash_fn: Optional[def(Self.K) thin -> UInt64]
     var arena: NodeArena[Self.K, Self.V]
     var children_pool: ChildrenPool[Self.K, Self.V]  # Simple bump allocator for children arrays
 
@@ -522,6 +523,32 @@ struct HAMT[
         # TODO make this a comptime var
         self._max_level = 10
         self._size = 0
+        self._custom_hash_fn = Optional[def(Self.K) thin -> UInt64]()
+
+
+    def __init__(out self, hash_fn: def(Self.K) thin -> UInt64):
+        # Initialize profiling counters
+        self._profile_internal_visits = 0
+        self._profile_leaf_visits = 0
+        self._profile_bitmap_hits = 0
+        self._profile_bitmap_misses = 0
+        self._profile_getchild_calls = 0
+        # Initialize timing fields
+        self._time_hash_total = 0
+        self._time_traverse_total = 0
+        self._time_leaf_total = 0
+        self._time_total = 0
+        self._op_count = 0
+        # Initialize arena and children pool
+        self.arena = NodeArena[Self.K, Self.V](block_size=1024)
+        self.children_pool = ChildrenPool[Self.K, Self.V]()
+        # Allocate root from arena
+        self.root = self.arena.allocate_node()
+        self.root.init_pointee_move(HAMTNode[Self.K, Self.V]())
+        # TODO make this a comptime var
+        self._max_level = 10
+        self._size = 0
+        self._custom_hash_fn = Optional(hash_fn)
 
 
     def __moveinit__(mut self, mut current: Self):
@@ -538,6 +565,8 @@ struct HAMT[
         self.root = current.root
         self._max_level = current._max_level
         self._size = current._size
+        self._custom_hash_fn = current._custom_hash_fn
+        current._custom_hash_fn = Optional[def(Self.K) thin -> UInt64]()
         self.arena = current.arena^
         current.arena = NodeArena[Self.K, Self.V]()
         self.children_pool = current.children_pool^
@@ -549,7 +578,7 @@ struct HAMT[
 
     def _calculate_hash(self, key: Self.K) -> UInt64:
         """Returns an integer of size 60 bits, by clearing the top 4 bits."""
-        var hashed_key: UInt64 = hash(key)
+        var hashed_key: UInt64 = self._custom_hash_fn.value()(key) if self._custom_hash_fn else hash(key)
 
         var filtered_key = hashed_key & FILTER
 

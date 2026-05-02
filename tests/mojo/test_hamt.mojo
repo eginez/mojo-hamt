@@ -377,7 +377,7 @@ def test_hamt_forced_hash_collision() raises:
         return UInt64(42)  # All keys hash to the same value!
 
     # Create HAMT with collision-inducing hash function
-    var hamt = HAMT[Int, String]()
+    var hamt = HAMT[Int, String](collision_hash)
 
     # Test data: keys and expected values
     var test_keys = List[Int]()
@@ -407,7 +407,7 @@ def test_collision() raises:
     def collision_hash(x: Int) -> UInt64:
         return 0
 
-    var hamt = HAMT[Int, Int]()
+    var hamt = HAMT[Int, Int](collision_hash)
     hamt.set(1, 100)
     hamt.set(2, 200)  # This should collide with key 1
 
@@ -637,6 +637,7 @@ def main() raises:
     test_hamt_deep_tree()
     test_update_values()
     test_hamt_forced_hash_collision()
+    test_collision()
     test_dunder_getitem()
     test_dunder_getitem_raises()
     test_dunder_setitem()
