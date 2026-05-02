@@ -52,9 +52,12 @@ jobs:
       - name: Register machine for asv
         run: pixi run asv machine --yes
 
+      - name: Setup local main branch
+        run: git branch main origin/main || true
+
       - name: Run benchmarks
         run: |
-          pixi run asv run --show-stderr
+          pixi run asv run HEAD^! --show-stderr
 
       - name: Generate benchmark HTML
         run: pixi run asv publish
