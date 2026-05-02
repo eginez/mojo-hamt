@@ -1,5 +1,5 @@
 """
-HAMT (Hash Array Mapped Trie) Implementation
+HAMT (Hash Array Mapped Trie) Implementation.
 
 A high-performance persistent hash map implementation using HAMT data structure.
 Optimized for cache locality and memory efficiency.
@@ -7,14 +7,11 @@ Optimized for cache locality and memory efficiency.
 
 from std.collections import List
 from std.memory import UnsafePointer, alloc
-from testing import assert_equal, assert_true
+from std.testing import assert_equal, assert_true
 from std.bit.bit import pop_count
-from time import perf_counter_ns
-from sys.param_env import env_get_string
-from os import env
-from python import PythonObject
-from python.bindings import PythonModuleBuilder
-from os import abort
+from std.time import perf_counter_ns
+from std.python import PythonObject
+from std.os import abort
 from std.utils import Variant
 
 
@@ -60,11 +57,12 @@ struct ChildrenPool[
         self.total_slots_used = 0
         self.reused_slots = 0
 
-    def __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.pool = other.pool
         self.next_index = other.next_index
         self.capacity = other.capacity
         self.freed_arrays = other.freed_arrays^
+        other.freed_arrays = List[Tuple[UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], Int]]()
         self.total_allocations = other.total_allocations
         self.fallback_allocations = other.fallback_allocations
         self.total_slots_used = other.total_slots_used
@@ -201,7 +199,7 @@ struct HAMTInternalNode[
         self.children = UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin].unsafe_dangling()
         self.capacity = 0
 
-    def __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.children_bitmap = other.children_bitmap
         self.children = other.children
         self.capacity = other.capacity
@@ -346,8 +344,9 @@ struct HAMTNode[
     def __init__(out self, var leaf: HAMTLeafNode[Self.K, Self.V]):
         self.data = Self._HAMTNode(leaf^)
 
-    def __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.data = other.data^
+        other.data = Self._HAMTNode(HAMTInternalNode[Self.K,Self.V]())
 
     @always_inline
     def is_internal(self) -> Bool:
@@ -427,12 +426,14 @@ struct NodeArena[
         self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling()
         self.freelist = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
 
-    def __moveinit__(out self, deinit current: Self):
+    def __moveinit__(mut self, mut current: Self):
         self.blocks = current.blocks^
+        current.blocks = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
         self.current_block = current.current_block
         self.block_size = current.block_size
         self.next_index = current.next_index
         self.freelist = current.freelist^
+        current.freelist = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
 
     def allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         """Allocate a single node from the arena.
@@ -464,8 +465,7 @@ struct NodeArena[
         Phase 3: Instead of leaking freed nodes, add them to the freelist.
         The caller is responsible for cleaning up the node's contents before calling this.
         """
-        if node:
-            self.freelist.append(node)
+        self.freelist.append(node)
 
     def __del__(deinit self):
         """Free all allocated blocks."""
@@ -524,7 +524,7 @@ struct HAMT[
         self._size = 0
 
 
-    def __moveinit__(out self, deinit current: Self):
+    def __moveinit__(mut self, mut current: Self):
         self._profile_internal_visits = current._profile_internal_visits
         self._profile_leaf_visits = current._profile_leaf_visits
         self._profile_bitmap_hits = current._profile_bitmap_hits
@@ -539,7 +539,9 @@ struct HAMT[
         self._max_level = current._max_level
         self._size = current._size
         self.arena = current.arena^
+        current.arena = NodeArena[Self.K, Self.V]()
         self.children_pool = current.children_pool^
+        current.children_pool = ChildrenPool[Self.K, Self.V]()
 
     @always_inline
     def _get_next_chunk(self, hashed_key: UInt64, level: UInt16) -> UInt8:
@@ -617,7 +619,7 @@ struct HAMT[
     
     def _count_internal_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
         """Recursively count internal nodes for diagnostics."""
-        if not node or not node[].is_internal():
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not node[].is_internal():
             return 0
         
         var count = 1  # Count this internal node
@@ -647,7 +649,7 @@ struct HAMT[
         
         Returns: (total_internal_nodes, total_children, avg_children_per_node)
         """
-        if not node or not node[].is_internal():
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not node[].is_internal():
             return (0, 0, 0.0)
         
         var internal_count = self._count_internal_nodes(node)
@@ -659,7 +661,7 @@ struct HAMT[
         
         while len(stack) > 0:
             var current = stack.pop()
-            if not current or not current[].is_internal():
+            if current == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not current[].is_internal():
                 continue
             
             var num = current[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
@@ -680,7 +682,7 @@ struct HAMT[
         print("Max tree depth:", self._count_tree_depth(self.root, 0), "/", self._max_level)
         print("Internal nodes:", self._count_internal_nodes(self.root))
         print("Leaf nodes:", self._count_leaf_nodes(self.root))
-        var (internal_count, total_children, avg_children) = self._calc_avg_children_per_internal_node(self.root)
+        var (_, total_children, avg_children) = self._calc_avg_children_per_internal_node(self.root)
         print("Avg children per internal node:", avg_children)
         print("Total children pointers:", total_children)
         print("======================================\n")
