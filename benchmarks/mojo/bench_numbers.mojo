@@ -1,5 +1,5 @@
 """
-Simplified HAMT Benchmark - Single Measurement Mode
+Simplified HAMT Benchmark - Single Measurement Mode.
 
 This benchmark runs a single operation at a single scale and outputs
 operations per second to stdout. Designed for integration with asv
@@ -20,14 +20,14 @@ Output:
     Single number (operations per second) to stdout
 """
 
-from time import perf_counter_ns
-from sys import argv
-from testing import assert_equal
+from std.time import perf_counter_ns
+from std.sys import argv
+from std.testing import assert_equal
 
 from hamt import HAMT
 
 
-fn bench_insert(scale: Int) raises -> Int:
+def bench_insert(scale: Int) raises -> Int:
     """Insert N sequential keys, return total time in nanoseconds.
 
     Creates an empty HAMT and inserts sequential integer keys from 0 to scale-1.
@@ -51,7 +51,7 @@ fn bench_insert(scale: Int) raises -> Int:
     return Int(end - start)
 
 
-fn bench_query(scale: Int) raises -> Int:
+def bench_query(scale: Int) raises -> Int:
     """Query N existing keys, return total time in nanoseconds.
 
     Pre-populates a HAMT with sequential keys, then looks up all of them.
@@ -78,7 +78,7 @@ fn bench_query(scale: Int) raises -> Int:
     return Int(end - start)
 
 
-fn main() raises:
+def main() raises:
     """Main entry point - parse arguments and run benchmark."""
 
     # Parse arguments

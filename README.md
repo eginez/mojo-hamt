@@ -28,10 +28,10 @@ This project uses [Pixi](https://pixi.sh/) for dependency management.
 pixi install
 
 # Build
-pixi run mojo build hamt.mojo
+pixi run build
 
 # Run tests
-pixi run mojo test_hamt.mojo
+pixi run test
 ```
 
 ## Usage
@@ -183,7 +183,7 @@ Comprehensive test suite covering:
 
 Run all tests:
 ```bash
-pixi run mojo test_hamt.mojo
+pixi run test
 ```
 
 ## Benchmarking
@@ -317,11 +317,11 @@ Benchmark against:
 ##### Local Development
 ```bash
 # Run basic benchmarks
-pixi run mojo benchmark_hamt.mojo
+pixi run bench
 
-# Run specific benchmark suite
-pixi run mojo benchmark_hamt.mojo --dataset=words
-pixi run mojo benchmark_hamt.mojo --dataset=synthetic --size=1000000
+# Run specific benchmark compilation (e.g., debug)
+pixi run build-bench
+pixi run bench-debug
 ```
 
 ## References

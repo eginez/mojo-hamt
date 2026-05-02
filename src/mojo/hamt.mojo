@@ -1,21 +1,18 @@
 """
-HAMT (Hash Array Mapped Trie) Implementation
+HAMT (Hash Array Mapped Trie) Implementation.
 
 A high-performance persistent hash map implementation using HAMT data structure.
 Optimized for cache locality and memory efficiency.
 """
 
-from collections import List
-from memory import UnsafePointer, alloc
-from testing import assert_equal, assert_true
-from bit.bit import pop_count
-from time import perf_counter_ns
-from sys.param_env import env_get_string
-from os import env
-from python import PythonObject
-from python.bindings import PythonModuleBuilder
-from os import abort
-from utils import Variant
+from std.collections import List
+from std.memory import UnsafePointer, alloc
+from std.testing import assert_equal, assert_true
+from std.bit.bit import pop_count
+from std.time import perf_counter_ns
+from std.python import PythonObject
+from std.os import abort
+from std.utils import Variant
 
 
 # Clears the highest 4 bits of the UInt64
@@ -30,8 +27,8 @@ comptime CHILDREN_POOL_SIZE = 4194304  # 4M slots (32MB) - supports ~130K+ entri
 
 
 struct ChildrenPool[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
 ](Movable):
     """Simple bump allocator for children arrays.
 
@@ -49,7 +46,7 @@ struct ChildrenPool[
     var total_slots_used: Int
     var reused_slots: Int
     
-    fn __init__(out self):
+    def __init__(out self):
         """Pre-allocate large pool."""
         self.capacity = CHILDREN_POOL_SIZE
         self.pool = alloc[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]](self.capacity)
@@ -60,17 +57,18 @@ struct ChildrenPool[
         self.total_slots_used = 0
         self.reused_slots = 0
 
-    fn __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.pool = other.pool
         self.next_index = other.next_index
         self.capacity = other.capacity
         self.freed_arrays = other.freed_arrays^
+        other.freed_arrays = List[Tuple[UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], Int]]()
         self.total_allocations = other.total_allocations
         self.fallback_allocations = other.fallback_allocations
         self.total_slots_used = other.total_slots_used
         self.reused_slots = other.reused_slots
     
-    fn __del__(deinit self):
+    def __del__(deinit self):
         """Free entire pool.
 
         Note: We only free the main pool block. Individual arrays allocated
@@ -79,14 +77,14 @@ struct ChildrenPool[
 
         Phase 4: Freed arrays are automatically reclaimed when the pool is freed.
         """
-        if self.pool:
+        if self.pool != UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin].unsafe_dangling():
             self.pool.free()
         # Note: We don't track which arrays were bump-allocated vs fallback-allocated
         # In a production implementation, we'd need to track this, but for now
         # we accept that fallback allocations may leak (they're rare)
 
     @always_inline
-    fn allocate(mut self, size: Int) -> UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]:
+    def allocate(mut self, size: Int) -> UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]:
         """Allocate array of given size from pool using bump allocation.
 
         Phase 4: First checks freed_arrays for reusable arrays from previous growth operations.
@@ -115,7 +113,7 @@ struct ChildrenPool[
         return ptr
 
     @always_inline
-    fn free(mut self, ptr: UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], size: Int):
+    def free(mut self, ptr: UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin], size: Int):
         """Return an array to the pool for reuse.
 
         Phase 4: Instead of leaking arrays during growth, track them for reuse.
@@ -128,7 +126,7 @@ struct ChildrenPool[
         # We track them for reuse - they'll be returned to the pool when the HAMT is destroyed.
         self.freed_arrays.append((ptr, size))
 
-    fn print_stats(self):
+    def print_stats(self):
         """Print pool utilization statistics."""
         print("=== ChildrenPool Statistics ===")
         print("Total allocations:", self.total_allocations)
@@ -144,20 +142,20 @@ struct ChildrenPool[
 
 
 struct HAMTLeafNode[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
 ](Copyable, Movable):
     var _items: List[Tuple[Self.K, Self.V]]
 
-    fn __init__(out self):
+    def __init__(out self):
         self._items = List[Tuple[Self.K, Self.V]]()
 
-    fn __init__(out self, var key: Self.K, var value: Self.V):
+    def __init__(out self, var key: Self.K, var value: Self.V):
         self._items = List[Tuple[Self.K, Self.V]]()
         _ = self.add(key^, value^)
 
     @always_inline
-    fn add(mut self, var key: Self.K, var value: Self.V) -> Bool:
+    def add(mut self, var key: Self.K, var value: Self.V) -> Bool:
         """Add or update a key-value pair. Returns True if a new key was added, False if updated.
         
         Uses move semantics to avoid unnecessary copies. Takes ownership of key and value.
@@ -173,7 +171,7 @@ struct HAMTLeafNode[
         return True
 
     @always_inline
-    fn get(self, key: Self.K) -> Optional[Self.V]:
+    def get(self, key: Self.K) -> Optional[Self.V]:
         for item in self._items:
             if item[0] == key:
                 return Optional(item[1].copy())
@@ -181,8 +179,8 @@ struct HAMTLeafNode[
 
 
 struct HAMTInternalNode[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
 ](Movable):
     """Internal HAMT node with pointer to dynamically-sized children array.
     
@@ -196,37 +194,37 @@ struct HAMTInternalNode[
     # Capacity of children array (for growth)
     var capacity: Int
 
-    fn __init__(out self):
+    def __init__(out self):
         self.children_bitmap = 0
-        self.children = UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin]()
+        self.children = UnsafePointer[mut=True, UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], MutExternalOrigin].unsafe_dangling()
         self.capacity = 0
 
-    fn __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.children_bitmap = other.children_bitmap
         self.children = other.children
         self.capacity = other.capacity
 
-    fn __del__(deinit self):
+    def __del__(deinit self):
         """Note: Children arrays are now bump-allocated from pool.
         We don't free them individually - they're freed when the pool is destroyed.
         """
         pass
 
     @always_inline
-    fn num_children(self) -> Int:
+    def num_children(self) -> Int:
         """Get the number of children (population count of bitmap)."""
         return Int(pop_count(self.children_bitmap))
 
-    fn collect_items(self, mut items: List[Tuple[Self.K, Self.V]]):
+    def collect_items(self, mut items: List[Tuple[Self.K, Self.V]]):
         """Recursively collect all key-value pairs from this node and its children.
         """
         var n = self.num_children()
         for i in range(n):
             var child = self.children[i]
-            if child:
+            if child != UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                 child[].collect_items(items)
 
-    fn add_child(
+    def add_child(
         mut self, chunk_index: UInt8, mut arena: NodeArena[Self.K, Self.V], mut children_pool: ChildrenPool[Self.K, Self.V], is_internal: Bool
     ) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         var masked_chunked = UInt64(1) << UInt64(chunk_index)
@@ -269,7 +267,7 @@ struct HAMTInternalNode[
         self.children[child_index] = new_node_pointer
         return new_node_pointer
 
-    fn _grow_children_array(mut self, new_capacity: Int, mut children_pool: ChildrenPool[Self.K, Self.V]):
+    def _grow_children_array(mut self, new_capacity: Int, mut children_pool: ChildrenPool[Self.K, Self.V]):
         """Grow children array to new capacity using bump allocator pool."""
         # Allocate new array from pool (eliminates malloc in hot path!)
         var new_array = children_pool.allocate(new_capacity)
@@ -303,7 +301,7 @@ struct HAMTInternalNode[
         self.capacity = new_capacity
 
     @always_inline
-    fn get_child(
+    def get_child(
         self, chunk_index: UInt8
     ) raises -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         # The chunk index as an integer represents
@@ -312,7 +310,7 @@ struct HAMTInternalNode[
         var masked_chunked = UInt64(1) << UInt64(chunk_index)
         if (self.children_bitmap & UInt64(masked_chunked)) == 0:
             # Fast path: no logging in hot path
-            return UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]()
+            return UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling()
 
         # The actual index of the value, is number of 1s before
         # that position.
@@ -326,8 +324,8 @@ struct HAMTInternalNode[
 
 
 struct HAMTNode[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
 ](Movable):
     """HAMT node - can be either internal (with children) or leaf (with values).
     
@@ -337,24 +335,25 @@ struct HAMTNode[
     comptime _HAMTNode = Variant[HAMTInternalNode[Self.K,Self.V], HAMTLeafNode[Self.K,Self.V]]
     var data: Self._HAMTNode
 
-    fn __init__(out self):
+    def __init__(out self):
         self.data = Self._HAMTNode(HAMTInternalNode[Self.K,Self.V]())
 
-    fn __init__(out self, var key: Self.K, var value: Self.V):
+    def __init__(out self, var key: Self.K, var value: Self.V):
         self.data = Self._HAMTNode(HAMTLeafNode[Self.K,Self.V](key^, value^))
 
-    fn __init__(out self, var leaf: HAMTLeafNode[Self.K, Self.V]):
+    def __init__(out self, var leaf: HAMTLeafNode[Self.K, Self.V]):
         self.data = Self._HAMTNode(leaf^)
 
-    fn __moveinit__(out self, deinit other: Self):
+    def __moveinit__(mut self, mut other: Self):
         self.data = other.data^
+        other.data = Self._HAMTNode(HAMTInternalNode[Self.K,Self.V]())
 
     @always_inline
-    fn is_internal(self) -> Bool:
+    def is_internal(self) -> Bool:
         return self.data.isa[HAMTInternalNode[Self.K,Self.V]]()
 
     @always_inline
-    fn children_bitmap(self) -> UInt64:
+    def children_bitmap(self) -> UInt64:
         """Get the children bitmap (only for internal nodes, returns 0 for leaf nodes)."""
         if self.is_internal():
             return self.data[HAMTInternalNode[Self.K,Self.V]].children_bitmap
@@ -362,14 +361,14 @@ struct HAMTNode[
 
 
     @always_inline
-    fn get_value(self, key: Self.K) raises -> Optional[Self.V]:
+    def get_value(self, key: Self.K) raises -> Optional[Self.V]:
         if self.is_internal():
             raise Error("Can not get value from internal node")
 
         return self.data[HAMTLeafNode[Self.K,Self.V]].get(key)
 
     @always_inline
-    fn add_value(mut self, var key: Self.K, var value: Self.V) raises -> Bool:
+    def add_value(mut self, var key: Self.K, var value: Self.V) raises -> Bool:
         if self.is_internal():
             raise Error("Can not add value to internal node")
 
@@ -377,7 +376,7 @@ struct HAMTNode[
 
 
     @always_inline
-    fn add_child(
+    def add_child(
         mut self, chunk_index: UInt8, mut arena: NodeArena[Self.K, Self.V], mut children_pool: ChildrenPool[Self.K, Self.V], is_internal: Bool
     ) raises -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         if self.is_internal():
@@ -386,12 +385,12 @@ struct HAMTNode[
         raise Error("Can not add child to leaf node")
 
     @always_inline
-    fn get_child(self, chunk_index: UInt8) raises -> UnsafePointer[mut=True, HAMTNode[Self.K,Self.V], MutExternalOrigin]:
+    def get_child(self, chunk_index: UInt8) raises -> UnsafePointer[mut=True, HAMTNode[Self.K,Self.V], MutExternalOrigin]:
         if self.is_internal():
             return self.data[HAMTInternalNode[Self.K,Self.V]].get_child(chunk_index)
         raise Error("Can not grow a leaf node")
 
-    fn collect_items(self, mut items: List[Tuple[Self.K, Self.V]]):
+    def collect_items(self, mut items: List[Tuple[Self.K, Self.V]]):
         """Recursively collect all key-value pairs from this node."""
         if self.is_internal():
             # Internal node - recurse into children
@@ -403,8 +402,8 @@ struct HAMTNode[
 
 
 struct NodeArena[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
 ](Movable):
     """Arena allocator for HAMT nodes with freelist recycling.
 
@@ -419,22 +418,24 @@ struct NodeArena[
     # Phase 3: Freelist for recycling nodes
     var freelist: List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]
 
-    fn __init__(out self, block_size: Int = 1024):
+    def __init__(out self, block_size: Int = 1024):
         """Initialize arena with given block size (default 1024 nodes)."""
         self.blocks = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
         self.block_size = block_size
         self.next_index = block_size  # Force allocation of first block
-        self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]()
+        self.current_block = UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling()
         self.freelist = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
 
-    fn __moveinit__(out self, deinit current: Self):
+    def __moveinit__(mut self, mut current: Self):
         self.blocks = current.blocks^
+        current.blocks = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
         self.current_block = current.current_block
         self.block_size = current.block_size
         self.next_index = current.next_index
         self.freelist = current.freelist^
+        current.freelist = List[UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]]()
 
-    fn allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
+    def allocate_node(mut self) -> UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]:
         """Allocate a single node from the arena.
 
         Phase 3: First tries to reuse a node from the freelist. If freelist is empty,
@@ -458,28 +459,27 @@ struct NodeArena[
         self.next_index += 1
         return node_ptr
 
-    fn free_node(mut self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]):
+    def free_node(mut self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]):
         """Return a node to the freelist for reuse.
         
         Phase 3: Instead of leaking freed nodes, add them to the freelist.
         The caller is responsible for cleaning up the node's contents before calling this.
         """
-        if node:
-            self.freelist.append(node)
+        self.freelist.append(node)
 
-    fn __del__(deinit self):
+    def __del__(deinit self):
         """Free all allocated blocks."""
         for block in self.blocks:
-            if block:
+            if block != UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                 # Note: We don't call destroy_pointee on individual nodes
                 # The HAMT's __del__ handles node cleanup via tree traversal
                 block.free()
 
 
 struct HAMT[
-    K: Movable & Copyable & Hashable & Equatable & Stringable,
-    V: Movable & Copyable & Stringable,
-](Defaultable, Movable, Representable, Sized, Stringable):
+    K: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Hashable & Equatable & Writable,
+    V: Movable & Copyable & ImplicitlyCopyable & ImplicitlyDestructible & Writable,
+](Sized, Writable):
     # Profiling counters
     var _profile_internal_visits: Int
     var _profile_leaf_visits: Int
@@ -497,11 +497,11 @@ struct HAMT[
     var root: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]
     var _size: Int
     var _max_level: UInt16
-    var _custom_hash_fn: Optional[fn (Self.K) -> UInt64]
+    var _custom_hash_fn: Optional[def(Self.K) thin -> UInt64]
     var arena: NodeArena[Self.K, Self.V]
     var children_pool: ChildrenPool[Self.K, Self.V]  # Simple bump allocator for children arrays
 
-    fn __init__(out self):
+    def __init__(out self):
         # Initialize profiling counters
         self._profile_internal_visits = 0
         self._profile_leaf_visits = 0
@@ -520,12 +520,13 @@ struct HAMT[
         # Allocate root from arena
         self.root = self.arena.allocate_node()
         self.root.init_pointee_move(HAMTNode[Self.K, Self.V]())
-        self._custom_hash_fn = Optional[fn (Self.K) -> UInt64]()
         # TODO make this a comptime var
         self._max_level = 10
         self._size = 0
+        self._custom_hash_fn = Optional[def(Self.K) thin -> UInt64]()
 
-    fn __init__(out self, hash_fn: fn (Self.K) -> UInt64):
+
+    def __init__(out self, hash_fn: def(Self.K) thin -> UInt64):
         # Initialize profiling counters
         self._profile_internal_visits = 0
         self._profile_leaf_visits = 0
@@ -544,11 +545,13 @@ struct HAMT[
         # Allocate root from arena
         self.root = self.arena.allocate_node()
         self.root.init_pointee_move(HAMTNode[Self.K, Self.V]())
-        self._custom_hash_fn = Optional(hash_fn)
+        # TODO make this a comptime var
         self._max_level = 10
         self._size = 0
+        self._custom_hash_fn = Optional(hash_fn)
 
-    fn __moveinit__(out self, deinit current: Self):
+
+    def __moveinit__(mut self, mut current: Self):
         self._profile_internal_visits = current._profile_internal_visits
         self._profile_leaf_visits = current._profile_leaf_visits
         self._profile_bitmap_hits = current._profile_bitmap_hits
@@ -560,23 +563,22 @@ struct HAMT[
         self._time_total = current._time_total
         self._op_count = current._op_count
         self.root = current.root
-        self._custom_hash_fn = current._custom_hash_fn^
         self._max_level = current._max_level
         self._size = current._size
+        self._custom_hash_fn = current._custom_hash_fn
+        current._custom_hash_fn = Optional[def(Self.K) thin -> UInt64]()
         self.arena = current.arena^
+        current.arena = NodeArena[Self.K, Self.V]()
         self.children_pool = current.children_pool^
+        current.children_pool = ChildrenPool[Self.K, Self.V]()
 
     @always_inline
-    fn _get_next_chunk(self, hashed_key: UInt64, level: UInt16) -> UInt8:
+    def _get_next_chunk(self, hashed_key: UInt64, level: UInt16) -> UInt8:
         return UInt8((hashed_key >> UInt64(6 * level)) & 0x3F)
 
-    fn _calculate_hash(self, key: Self.K) -> UInt64:
+    def _calculate_hash(self, key: Self.K) -> UInt64:
         """Returns an integer of size 60 bits, by clearing the top 4 bits."""
-        var hashed_key: UInt64
-        if self._custom_hash_fn:
-            hashed_key = self._custom_hash_fn.value()(key)
-        else:
-            hashed_key = hash(key)
+        var hashed_key: UInt64 = self._custom_hash_fn.value()(key) if self._custom_hash_fn else hash(key)
 
         var filtered_key = hashed_key & FILTER
 
@@ -586,7 +588,7 @@ struct HAMT[
         return filtered_key
 
     @always_inline
-    fn get(self, key: Self.K) raises -> Optional[Self.V]:
+    def get(self, key: Self.K) raises -> Optional[Self.V]:
         var curr_level: UInt16 = 0
         var curr_node = self.root
         var hashed_key = self._calculate_hash(key)
@@ -597,14 +599,14 @@ struct HAMT[
         while curr_level < self._max_level:
             chunk_index = self._get_next_chunk(hashed_key, curr_level)
             curr_node = curr_node[].get_child(chunk_index)
-            if not curr_node:
+            if curr_node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                 return Optional[Self.V]()
             curr_level += 1
 
         return curr_node[].get_value(key)
 
     @always_inline
-    fn set(mut self, var key: Self.K, var value: Self.V) raises:
+    def set(mut self, var key: Self.K, var value: Self.V) raises:
         var curr_level: UInt16 = 0
         var curr_node = self.root
         # Hash before moving (need to borrow key)
@@ -613,7 +615,7 @@ struct HAMT[
         while curr_level < self._max_level:
             chunk_index = self._get_next_chunk(hashed_key, curr_level)
             var next_node = curr_node[].get_child(chunk_index)
-            if not next_node:
+            if next_node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                 # insert node in the parent at index chunk_index
                 # Create internal node if not at second-to-last level, leaf otherwise
                 var is_internal = curr_level < self._max_level - 1
@@ -626,9 +628,9 @@ struct HAMT[
         if is_new_key:
             self._size += 1
     
-    fn _count_tree_depth(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], current_depth: Int) -> Int:
+    def _count_tree_depth(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin], current_depth: Int) -> Int:
         """Recursively count max tree depth for diagnostics."""
-        if not node:
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
             return current_depth
         
         if node[].is_internal():
@@ -644,9 +646,9 @@ struct HAMT[
             # Leaf node - return current depth
             return current_depth
     
-    fn _count_internal_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
+    def _count_internal_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
         """Recursively count internal nodes for diagnostics."""
-        if not node or not node[].is_internal():
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not node[].is_internal():
             return 0
         
         var count = 1  # Count this internal node
@@ -656,9 +658,9 @@ struct HAMT[
             count += self._count_internal_nodes(child)
         return count
     
-    fn _count_leaf_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
+    def _count_leaf_nodes(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Int:
         """Recursively count leaf nodes for diagnostics."""
-        if not node:
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
             return 0
         
         if not node[].is_internal():
@@ -671,12 +673,12 @@ struct HAMT[
             count += self._count_leaf_nodes(child)
         return count
     
-    fn _calc_avg_children_per_internal_node(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Tuple[Int, Int, Float64]:
+    def _calc_avg_children_per_internal_node(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]) -> Tuple[Int, Int, Float64]:
         """Calculate average children per internal node.
         
         Returns: (total_internal_nodes, total_children, avg_children_per_node)
         """
-        if not node or not node[].is_internal():
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not node[].is_internal():
             return (0, 0, 0.0)
         
         var internal_count = self._count_internal_nodes(node)
@@ -688,7 +690,7 @@ struct HAMT[
         
         while len(stack) > 0:
             var current = stack.pop()
-            if not current or not current[].is_internal():
+            if current == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling() or not current[].is_internal():
                 continue
             
             var num = current[].data[HAMTInternalNode[Self.K,Self.V]].num_children()
@@ -696,25 +698,25 @@ struct HAMT[
             
             for i in range(num):
                 var child = current[].data[HAMTInternalNode[Self.K,Self.V]].children[i]
-                if child:
+                if child != UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                     stack.append(child)
         
         var avg = Float64(total_children) / Float64(internal_count) if internal_count > 0 else 0.0
         return (internal_count, total_children, avg)
     
-    fn print_tree_stats(self):
+    def print_tree_stats(self):
         """Print detailed tree structure statistics for performance analysis."""
         print("\n=== HAMT Tree Structure Statistics ===")
         print("Total entries:", self._size)
         print("Max tree depth:", self._count_tree_depth(self.root, 0), "/", self._max_level)
         print("Internal nodes:", self._count_internal_nodes(self.root))
         print("Leaf nodes:", self._count_leaf_nodes(self.root))
-        var (internal_count, total_children, avg_children) = self._calc_avg_children_per_internal_node(self.root)
+        var (_, total_children, avg_children) = self._calc_avg_children_per_internal_node(self.root)
         print("Avg children per internal node:", avg_children)
         print("Total children pointers:", total_children)
         print("======================================\n")
 
-    fn print_timing_stats(self):
+    def print_timing_stats(self):
         """Print detailed timing statistics for performance analysis."""
         print("\n=== HAMT Timing Statistics ===")
         print("Operation count:", self._op_count)
@@ -726,27 +728,27 @@ struct HAMT[
             print("Time total (ns):", self._time_total)
         print("=============================\n")
 
-    fn __del__(deinit self):
+    def __del__(deinit self):
         # Clean up node contents (Lists, etc.) but don't free individual nodes
         # The arena will free all blocks when it's destroyed
-        if self.root:
+        if self.root != UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
             self._cleanup_node(self.root)
         # Arena's __del__ will free all blocks
 
-    fn _cleanup_node(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]):
+    def _cleanup_node(self, node: UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin]):
         """Recursively cleanup node contents without freeing the node itself."""
-        if not node:
+        if node == UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
             return
 
         # Only internal nodes have children
         if node[].is_internal():
             # Take ownership of internal node temporarily to access children
             # This is safe because we're in __del__ and no one else has references
-            var internal = node[].data.unsafe_take[HAMTInternalNode[Self.K,Self.V]]()
+            ref internal = node[].data.unsafe_get[HAMTInternalNode[Self.K,Self.V]]()
             var num_children = internal.num_children()
             for i in range(num_children):
                 var child = internal.children[i]
-                if child:
+                if child != UnsafePointer[mut=True, HAMTNode[Self.K, Self.V], MutExternalOrigin].unsafe_dangling():
                     self._cleanup_node(child)
             # Internal node and its children array will be freed when 'internal' goes out of scope
 
@@ -756,16 +758,16 @@ struct HAMT[
 
     ### dict implementations
 
-    fn __len__(self) -> Int:
+    def __len__(self) -> Int:
         return Int(self._size)
 
-    fn __contains__(self, key: Self.K) raises -> Bool:
+    def __contains__(self, key: Self.K) raises -> Bool:
         var val = self.get(key)
         if val:
             return True
         return False
 
-    fn __getitem__(self, key: Self.K) raises -> Self.V:
+    def __getitem__(self, key: Self.K) raises -> Self.V:
         var result = self.get(key)
         if not result:
             raise Error("KeyError: key not found in HAMT")
@@ -773,10 +775,10 @@ struct HAMT[
         # TODO: why copy??
         return result.value().copy()
 
-    fn __setitem__(mut self, var key: Self.K, var value: Self.V) raises:
+    def __setitem__(mut self, var key: Self.K, var value: Self.V) raises:
         self.set(key^, value^)
 
-    fn __str__(self) -> String:
+    def __str__(self) -> String:
         """Returns string representation of the HAMT in dict-like format."""
         if self._size == 0:
             return "{}"
@@ -792,18 +794,18 @@ struct HAMT[
         result += "}"
         return result
 
-    fn print_pool_stats(self):
+    def print_pool_stats(self):
         """Print ChildrenPool utilization statistics for diagnostics."""
         self.children_pool.print_stats()
     
 
     
-    fn __repr__(self) -> String:
+    def __repr__(self) -> String:
         """Returns repr representation of the HAMT."""
         return "HAMT(" + self.__str__() + ")"
 
 
-# fn main() raises:
+# def main() raises:
 #    var node = HAMT[Int, Int]()
 #    node.set(1, 1)
 #    node.set(2, 200)

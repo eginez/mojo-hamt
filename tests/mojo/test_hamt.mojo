@@ -1,9 +1,9 @@
-from testing import assert_equal, assert_true, assert_false, TestSuite
+from std.testing import assert_equal, assert_true, assert_false
 from hamt import HAMTLeafNode, HAMTNode, HAMT
-from bit.bit import pop_count
+from std.bit.bit import pop_count
 
 
-def test_hamt_leaf_node():
+def test_hamt_leaf_node() raises:
     var leaf = HAMTLeafNode[String, Int]("test_key", 42)
     # Test using the new get() method instead of direct attribute access
     var result = leaf.get("test_key")
@@ -16,7 +16,7 @@ def test_hamt_leaf_node():
     print("✓ HAMTLeafNode tests passed")
 
 
-def test_hamt_node_initialization():
+def test_hamt_node_initialization() raises:
     var node = HAMTNode[String, Int]()
     assert_equal(node.children_bitmap(), 0)
     # InlineArray always has length 64, check that bitmap shows 0 children
@@ -24,7 +24,7 @@ def test_hamt_node_initialization():
     print("✓ HAMTNode initialization tests passed")
 
 
-def test_hamt_hash_calculation():
+def test_hamt_hash_calculation() raises:
     var hamt = HAMT[Int, String]()
 
     # Test that hash calculation returns 60-bit values
@@ -41,7 +41,7 @@ def test_hamt_hash_calculation():
     print("✓ HAMT hash calculation tests passed")
 
 
-def test_hamt_chunk_extraction():
+def test_hamt_chunk_extraction() raises:
     var hamt = HAMT[Int, String]()
 
     # Test chunk extraction at different levels
@@ -69,15 +69,15 @@ def test_hamt_chunk_extraction():
     print("✓ HAMT chunk extraction tests passed")
 
 
-def test_hamt_node_get_child():
+def test_hamt_node_get_child() raises:
     var node = HAMTNode[String, Int]()
 
     # Test get_child on empty node returns null pointer
     var result = node.get_child(0)
-    assert_false(result)
+    assert_equal(result, UnsafePointer[mut=True, HAMTNode[String, Int], MutExternalOrigin].unsafe_dangling())
 
     var result2 = node.get_child(5)
-    assert_false(result2)
+    assert_equal(result2, UnsafePointer[mut=True, HAMTNode[String, Int], MutExternalOrigin].unsafe_dangling())
 
     # Test bitmap operations manually
     var test_bitmap: UInt64 = 0
@@ -85,13 +85,13 @@ def test_hamt_node_get_child():
     assert_equal((test_bitmap >> 5) & 1, 1)
 
 
-#def test_hamt_value_creation():
+#def test_hamt_value_creation() raises:
 #    var node = HAMTNode[String, Int]()
 #    _ = node.add_value("hello", 1)
 #    assert_equal(node.get_value("hello").value(), 1)
 
 
-def test_hamt_creation():
+def test_hamt_creation() raises:
     var node = HAMT[Int, Int]()
     node.set(1, 1)
     var val = node.get(1).value()
@@ -100,7 +100,7 @@ def test_hamt_creation():
     print("✓ HAMT creation tests passed")
 
 
-def test_hamt_multiple_values():
+def test_hamt_multiple_values() raises:
     var hamt = HAMT[Int, String]()
 
     # Insert multiple key-value pairs
@@ -117,7 +117,7 @@ def test_hamt_multiple_values():
     print("✓ HAMT multiple values tests passed")
 
 
-def test_hamt_overwrite_values():
+def test_hamt_overwrite_values() raises:
     var hamt = HAMT[Int, Int]()
 
     # Set initial value
@@ -130,7 +130,7 @@ def test_hamt_overwrite_values():
     print("✓ HAMT overwrite tests passed")
 
 
-def test_hamt_nonexistent_keys():
+def test_hamt_nonexistent_keys() raises:
     var hamt = HAMT[Int, String]()
 
     # Add some values
@@ -146,7 +146,7 @@ def test_hamt_nonexistent_keys():
     print("✓ HAMT nonexistent keys tests passed")
 
 
-def test_hamt_string_keys():
+def test_hamt_string_keys() raises:
     var hamt = HAMT[String, Int]()
 
     hamt.set("apple", 1)
@@ -164,7 +164,7 @@ def test_hamt_string_keys():
     print("✓ HAMT string keys tests passed")
 
 
-def test_hamt_large_numbers():
+def test_hamt_large_numbers() raises:
     var hamt = HAMT[Int, Int]()
 
     # Test with large numbers that might cause hash collisions
@@ -185,7 +185,7 @@ def test_hamt_large_numbers():
     print("✓ HAMT large numbers tests passed")
 
 
-def test_hamt_sequential_keys():
+def test_hamt_sequential_keys() raises:
     var hamt = HAMT[Int, Int]()
 
     # Insert sequential keys (might have similar hash patterns)
@@ -199,7 +199,7 @@ def test_hamt_sequential_keys():
     print("✓ HAMT sequential keys tests passed")
 
 
-def test_hamt_zero_and_negative():
+def test_hamt_zero_and_negative() raises:
     var hamt = HAMT[Int, String]()
 
     # Test zero key
@@ -217,7 +217,7 @@ def test_hamt_zero_and_negative():
     print("✓ HAMT zero and negative tests passed")
 
 
-def test_hamt_sparse_keys():
+def test_hamt_sparse_keys() raises:
     var hamt = HAMT[Int, Int]()
 
     # Test very sparse key distribution
@@ -238,7 +238,7 @@ def test_hamt_sparse_keys():
     print("✓ HAMT sparse keys tests passed")
 
 
-def test_hamt_mixed_operations():
+def test_hamt_mixed_operations() raises:
     var hamt = HAMT[String, String]()
 
     # Mix of sets and gets
@@ -263,7 +263,7 @@ def test_hamt_mixed_operations():
     print("✓ HAMT mixed operations tests passed")
 
 
-def test_hamt_empty_string_keys():
+def test_hamt_empty_string_keys() raises:
     var hamt = HAMT[String, Int]()
 
     # Test empty string as key
@@ -280,7 +280,7 @@ def test_hamt_empty_string_keys():
     print("✓ HAMT empty string keys tests passed")
 
 
-def test_hamt_similar_keys():
+def test_hamt_similar_keys() raises:
     var hamt = HAMT[String, Int]()
 
     # Test keys that might have similar hash patterns
@@ -298,7 +298,7 @@ def test_hamt_similar_keys():
     print("✓ HAMT similar keys tests passed")
 
 
-def test_hamt_boundary_chunk_indices():
+def test_hamt_boundary_chunk_indices() raises:
     var hamt = HAMT[Int, String]()
 
     # Test keys that produce boundary chunk indices (0, 63)
@@ -308,7 +308,7 @@ def test_hamt_boundary_chunk_indices():
     # Add various keys to test different chunk patterns
     for i in range(100):
         var key = i * 1000 + i  # Create varied hash patterns
-        var value = "val_" + i.__str__()
+        var value = "val_" + String(i)
         hamt.set(key, value)
         test_pairs.append((key, value))
 
@@ -320,7 +320,7 @@ def test_hamt_boundary_chunk_indices():
     print("✓ HAMT boundary chunk indices tests passed")
 
 
-def test_hamt_deep_tree():
+def test_hamt_deep_tree() raises:
     var hamt = HAMT[Int, Int]()
 
     # Create keys that force maximum tree depth
@@ -341,7 +341,7 @@ def test_hamt_deep_tree():
     print("✓ HAMT deep tree tests passed")
 
 
-def test_update_values():
+def test_update_values() raises:
     var hamt = HAMT[Int, String]()
 
     # Since hash is 60-bit and we use 6-bit chunks, we have 10 levels
@@ -369,11 +369,11 @@ def test_update_values():
     print("✓ Hash collision behavior test completed (limited)")
 
 
-def test_hamt_forced_hash_collision():
+def test_hamt_forced_hash_collision() raises:
     """Test HAMT with custom hash function that forces collisions."""
 
     # Define a collision hash function that always returns the same value
-    fn collision_hash(key: Int) -> UInt64:
+    def collision_hash(key: Int) -> UInt64:
         return UInt64(42)  # All keys hash to the same value!
 
     # Create HAMT with collision-inducing hash function
@@ -402,9 +402,9 @@ def test_hamt_forced_hash_collision():
             assert_true(False, "Value expected")
 
 
-fn test_collision() raises:
+def test_collision() raises:
     # Create HAMT with custom hash that always returns 0 (force collisions)
-    fn collision_hash(x: Int) -> UInt64:
+    def collision_hash(x: Int) -> UInt64:
         return 0
 
     var hamt = HAMT[Int, Int](collision_hash)
@@ -415,7 +415,7 @@ fn test_collision() raises:
     assert_equal(hamt.get(2).or_else(-1), 200)
 
 
-def test_dunder_getitem():
+def test_dunder_getitem() raises:
     """Test __getitem__ dunder method (bracket notation for reading)."""
     var hamt = HAMT[Int, String]()
     hamt.set(1, "one")
@@ -428,7 +428,7 @@ def test_dunder_getitem():
     assert_equal(hamt[3], "three")
 
 
-def test_dunder_getitem_raises():
+def test_dunder_getitem_raises() raises:
     """Test that __getitem__ raises error for missing keys."""
     var hamt = HAMT[Int, String]()
     hamt.set(1, "one")
@@ -442,7 +442,7 @@ def test_dunder_getitem_raises():
     assert_true(raised, "Expected KeyError for missing key")
 
 
-def test_dunder_setitem():
+def test_dunder_setitem() raises:
     """Test __setitem__ dunder method (bracket notation for writing)."""
     var hamt = HAMT[String, Int]()
 
@@ -461,7 +461,7 @@ def test_dunder_setitem():
     assert_equal(hamt["apple"], 100)
 
 
-def test_dunder_contains():
+def test_dunder_contains() raises:
     """Test __contains__ dunder method (in operator)."""
     var hamt = HAMT[Int, String]()
     hamt.set(1, "one")
@@ -479,7 +479,7 @@ def test_dunder_contains():
     assert_false(-1 in hamt, "Key -1 should not be in HAMT")
 
 
-def test_dunder_len():
+def test_dunder_len() raises:
     """Test __len__ dunder method."""
     var hamt = HAMT[Int, Int]()
 
@@ -501,14 +501,14 @@ def test_dunder_len():
     assert_equal(len(hamt), 3)
 
 
-def test_dunder_str_empty():
+def test_dunder_str_empty() raises:
     """Test __str__ dunder method with empty HAMT."""
     var hamt = HAMT[Int, Int]()
     var str_repr = hamt.__str__()
     assert_equal(str_repr, "{}")
 
 
-def test_dunder_str_single_item():
+def test_dunder_str_single_item() raises:
     """Test __str__ dunder method with single item."""
     var hamt = HAMT[Int, String]()
     hamt.set(42, "answer")
@@ -521,7 +521,7 @@ def test_dunder_str_single_item():
     assert_true("}" in str_repr, "String should end with }")
 
 
-def test_dunder_str_multiple_items():
+def test_dunder_str_multiple_items() raises:
     """Test __str__ dunder method with multiple items."""
     var hamt = HAMT[Int, Int]()
     hamt.set(1, 100)
@@ -543,7 +543,7 @@ def test_dunder_str_multiple_items():
     assert_true("300" in str_repr, "String should contain value 300")
 
 
-def test_dunder_str_strings():
+def test_dunder_str_strings() raises:
     """Test __str__ with string keys and values."""
     var hamt = HAMT[String, String]()
     hamt.set("key1", "value1")
@@ -557,7 +557,7 @@ def test_dunder_str_strings():
     assert_true("value2" in str_repr, "String should contain value2")
 
 
-def test_dunder_repr_empty():
+def test_dunder_repr_empty() raises:
     """Test __repr__ dunder method with empty HAMT."""
     var hamt = HAMT[Int, Int]()
     var repr_str = hamt.__repr__()
@@ -566,7 +566,7 @@ def test_dunder_repr_empty():
     assert_true("{}" in repr_str, "Repr should contain {}")
 
 
-def test_dunder_repr_with_items():
+def test_dunder_repr_with_items() raises:
     """Test __repr__ dunder method with items."""
     var hamt = HAMT[Int, String]()
     hamt.set(1, "one")
@@ -584,7 +584,7 @@ def test_dunder_repr_with_items():
     assert_true("two" in repr_str, "Repr should contain value 'two'")
 
 
-def test_combined_dunder_methods():
+def test_combined_dunder_methods() raises:
     """Test using multiple dunder methods together."""
     var hamt = HAMT[Int, Int]()
 
@@ -615,6 +615,39 @@ def test_combined_dunder_methods():
     var str_repr = hamt.__str__()
     assert_true("100" in str_repr, "String should contain updated value")
 
-def main():
-  #TestSuite.discover_tests[__functions_in_module()]().run()
-  test_hamt_creation()
+def main() raises:
+    test_hamt_leaf_node()
+    test_hamt_node_initialization()
+    test_hamt_hash_calculation()
+    test_hamt_chunk_extraction()
+    test_hamt_node_get_child()
+    test_hamt_creation()
+    test_hamt_multiple_values()
+    test_hamt_overwrite_values()
+    test_hamt_nonexistent_keys()
+    test_hamt_string_keys()
+    test_hamt_large_numbers()
+    test_hamt_sequential_keys()
+    test_hamt_zero_and_negative()
+    test_hamt_sparse_keys()
+    test_hamt_mixed_operations()
+    test_hamt_empty_string_keys()
+    test_hamt_similar_keys()
+    test_hamt_boundary_chunk_indices()
+    test_hamt_deep_tree()
+    test_update_values()
+    test_hamt_forced_hash_collision()
+    test_collision()
+    test_dunder_getitem()
+    test_dunder_getitem_raises()
+    test_dunder_setitem()
+    test_dunder_contains()
+    test_dunder_len()
+    test_dunder_str_empty()
+    test_dunder_str_single_item()
+    test_dunder_str_multiple_items()
+    test_dunder_str_strings()
+    test_dunder_repr_empty()
+    test_dunder_repr_with_items()
+    test_combined_dunder_methods()
+    print("All tests passed!")
